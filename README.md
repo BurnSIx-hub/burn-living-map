@@ -1,0 +1,141 @@
+# 🔥 Wild Canvas
+
+[Русский](README.ru.md)
+
+A Foundry VTT 14 module that brings scene regions to life. A shader draws over
+the map image on every player's screen:
+
+- **water** — ripples, glints on the bottom, foam along the shore, and now and then a fish swims by: river fish (trout, perch, carp, pike), sea fish (mackerel, sea bream, cod, herring shoals) or ornamental koi. Pick them with "Fish kind" in the region window or in the settings. Where they swim depends on the scene seed (the `seed` flag written by Cartographer; without it, the scene id), so every map has its own fish and all players see the same ones;
+- **lava** — breathing glowing veins, sparks, heat along the shore;
+- **swamp** — creeping murk and bubbles;
+- **fog** — slowly drifting wisps;
+- **fire and smoke** — fire seen from above: tongues spread from the hearth in every direction, wide and yellow at the base, narrowing, reddening and fading into soot at the tips, bending and leaning with the wind; a hot core, glow on the ground, sparks, smoke drifting with the wind. The "Wildfire" slider: 0 is a campfire in the middle of the region, 1 sets the whole region on fire, unevenly, with charred bald patches;
+- **waterfall** — streams run along the region's "Direction" (90° is down), foam churns at the bottom edge, mist creeps past it and spray flickers; louder than a stream and heard four squares away;
+- **fountain** — for a round fountain in three bowls (Cartographer's built-in one): a low jet with drops in the middle, water spills over each rim with foam below, rings spread from the middle to the edge; babbles three squares away;
+- **wind in the crowns** — tree crowns (tiles) sway, gusts roll through the forest;
+- **burning tiles** — the tile itself burns (a house, a tree, a cart): in the tile window, "Appearance" tab, "Fire" — smouldering, burning or ablaze. The fire is the same as the region one: tongues spread from the hearths in every direction and lean with the fire wind; a small crown burns as one hearth in the middle. Flames appear only where the image is opaque (a baked semi-transparent shadow does not burn) and sway with the crown; smoke drifts above tokens with the fire wind, with Foundry light and the crackle of a large bonfire around it.
+
+The water or lava itself must already be painted on the map: the module adds
+motion, not a fill.
+
+## Marking regions
+
+- **Cartographer** turns everything painted with a living material (water, lava,
+  swamp — by texture name or by hand in the "Floor" panel) into regions on export.
+- **By hand** — the usual Foundry region tool: draw a region, then in the region
+  window, "Appearance" tab, choose "Animate as", the fish and the speed.
+
+Players don't see the region as a region — only as the effect.
+
+The wind sways tiles flagged `flags.burn-living-map.wind`: Cartographer sets it
+on tree crowns on export. Flag your own tile from the console:
+`tile.document.setFlag("burn-living-map", "wind", 1)`.
+
+Crowns flagged `flags.burn-living-map.particles` emit particles: `leaves` —
+falling leaves (their colour is taken from the crown image; in water a leaf makes
+ripples, floats with the wind and sinks, in swamp it gets stuck, in lava and fire
+it burns up), `fireflies` — fireflies. Cartographer sets it by the forest's
+season; it exports a winter forest with Foundry's own snow. Density is the
+"Falling leaves and fireflies" setting. By hand:
+`tile.document.setFlag("burn-living-map", "particles", "leaves")`.
+
+Tokens in effect regions: splashes on entering water and ripples behind them,
+murky rings and bubbles in swamp; lava is thick — red-hot shows through under the
+token, a dark crust spreads and the tracks cool down; in lava and fire the token
+burns: flames along its edges, smoke, sparks (the "Tokens in water, swamp and
+lava" setting).
+
+Fireflies are bugs with a lantern on the belly: they flash every 1.5–4 s, glow
+faintly in between and light the ground under them. Their light is drawn over
+Foundry lighting, so it shows at night too, and fog of war hides it.
+
+## Weather on the ground
+
+Snow and rain fall on their own (Foundry scene weather); the module adds what they leave on the floor:
+
+- **snow, blizzard** — snow drifts up here and there: a small drift, a round mound, a long streak along the wind, a crescent, a handful of clumps or a dusting; it grows, holds for a few seconds and melts. Streaks and crescents follow the scene's single wind; a blizzard brings more and bigger streaks;
+- **rain, downpour** — the floor gets wet: puddles faintly reflect the sky, raindrops make rings, small splashes on the wet ground.
+
+Nothing appears under roofs (tiles that block weather), in water, lava or swamp. Turn it off for yourself with the client setting "Weather on the ground".
+
+## Roofs
+
+A roof is a tile with fade occlusion and a light or weather restriction (the way the
+Cartographer exports them). A roof whose edge a token can see is shown whole from the
+street: house walls no longer hide it in fog. You cannot look under it: tokens and doors
+inside are still seen only along a real line of sight. Door leaves lie on the ground,
+under roofs, and a door icon under an opaque roof is hidden from everyone, the GM too.
+Doors in outer walls stay visible. On the Walls layer all icons show.
+
+## Burrows
+
+When a token burrows (the "Burrow" movement action), a hole and a pile of dug-up earth stay where it went underground, and another where it came out. The colour is taken from the floor image, so grass, sand and snow each get their own hole. Burrows are stored in the scene (the `burrows` flag, written by the GM), visible to everyone and survive a reload. Fill them in from the scene window, "Ambience" tab, or with `game.modules.get("burn-living-map").api.clearBurrows()`. No burrow is left in water, lava or swamp.
+
+## Footsteps
+
+When a token walks, everyone hears footsteps on what it steps on. The surface is decided in order:
+
+1. **A region with the "Footsteps: surface" behaviour** — hand marking, wins over everything: metal, stone, gravel, earth, grass, sand, snow, wood, creaky wood, water, mud, burning ground.
+2. **Wild Canvas regions**: water and waterfall — water (the first step splashes), swamp — mud, fire — crackling embers; lava gives no footsteps, it rumbles on its own; a cut-out (a bridge) — wood.
+3. **The floor of a Cartographer map**: on export it writes the `surfaces` flag to the scene — a letter per square, from the top floor layer (a road over a room floor, a room floor over terrain). Nothing to mark.
+4. Otherwise silence: other maps without marking are not guessed.
+
+A flying token (above 1 foot or "Fly") and a burrowing one make no steps. Walking (square by square) and running (dragging over several squares) have different paces. There are no own recordings of grass, sand and snow yet: grass and sand sound like earth, snow like gravel. Turn it off for yourself with the "Footsteps" setting; volume is the "Environment" slider.
+
+Moved here from the "Location Misc" module (formerly footstep-sounds). The behaviour is now `burn-living-map.surface`, declared in `module.json`: Foundry 14 did not accept the old `footstep-sounds.surfaceType`, and no world had regions with it.
+
+### Footstep sound credits
+
+- Stone, gravel, metal: [Footsteps on different surfaces](https://opengameart.org/content/footsteps-on-different-surfaces), congusbongus (CC BY 3.0; stone — swuing, gravel — Ali_6868 CC0, metal — Eelke)
+- Earth, wood: [Different steps on wood, stone, leaves, gravel and mud](https://opengameart.org/content/different-steps-on-wood-stone-leaves-gravel-and-mud) (CC0)
+- Creaky wood: [100 CC0 metal and wood SFX](https://opengameart.org/content/100-cc0-metal-and-wood-sfx) (CC0); wood variants — [100 CC0 SFX #2](https://opengameart.org/content/100-cc0-sfx-2) (CC0)
+- Water and mud — cut and mixed from Freesound recordings: "SPLASH.wav" — petenice, CC0, <https://freesound.org/s/9508/>; "footstepswetgrass.WAV" — stomachache, CC0, <https://freesound.org/s/48248/>; "walk-mud01.wav" — JanKoehl, CC BY 4.0, <https://freesound.org/s/85604/>; "Water slosh spashing-9.wav" — AGFX, CC BY 4.0, <https://freesound.org/s/20439/>
+- Burning ground — synthesised on the fly (`scripts/steps-synth.js`), no files.
+
+## Settings
+
+Client settings: on or off (for a weak computer), effect strength, place sounds.
+With BurnHub, the "Wild Canvas" tile turns it on and off.
+
+## Cloud shadows
+
+Scene window, "Ambience" tab: strength (0 is off) and density. Soft cloud shadows drift over the scene with the Wild Canvas wind; every 1–3 minutes a cloud covers the sun for a few seconds and the whole scene dims. Foundry lighting is unchanged: it is a layer of its own above the map, roofs and tokens. Shadows fade at night and soften in snow. Cartographer sets them for forests and town quarters.
+
+## Place sounds
+
+**Scene sound** — scene window, "Miscellaneous" tab, next to the playlist: "Place sound". Seasonal forest, cave, dungeon, town, tavern, house. It loops over the whole scene. Cartographer sets it on export.
+
+**Sound inside** — any region can have a "Sound inside" (tavern, house…): while a token is in it, that sound plays and the scene sound fades; at the threshold they cross over within half a square. Cartographer outlines the rooms of houses and taverns this way and sets the seasonal forest as the scene sound.
+
+**Area sound** — lava, water and swamp are heard over the region and within two squares of its edge, a campfire within five; closer is louder. Tokens listen, as with Foundry ambient sounds (for the GM, the selected ones). The recording is chosen in the region window, along with "Silent".
+
+**Bells** — a button in the GM's sound panel: they ring for everyone.
+
+Volume is the "Environment" slider; turn it off for yourself with the "Place sounds" setting. Loops are stitched with a 3 s crossfade. Recordings are Freesound HQ previews (mp3), long ones trimmed to 2.5–3 minutes; loudness is levelled with multipliers in `scripts/ambience.js`.
+
+### Recording credits
+
+- `lava-loop.mp3` — "Lava loop.wav", Audionautics, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), <https://freesound.org/s/133901/>
+- `forest-summer.mp3` — "BirdSongEaster2002NL.wav", HerbertBoland, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/28312/>
+- `forest-spring.mp3` — "birds-in-spring.aif", sverga, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/16726/>
+- `forest-autumn.mp3` — "Autumn wind grabbs the trees.wav", straget, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/403764/>
+- `forest-winter.mp3` — "Forest snow falling and birds", xkeril, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/673266/>
+- `forest-magic.mp3` — "eerie_forest.mp3", gregswinford, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/70100/>
+- `cave.mp3` — "Ambience_Cave_00.wav", LittleRobotSoundFactory, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/270387/>
+- `cave-creepy.mp3` — "Creepy Dungeon Ambience", DrMinky, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/166187/>
+- `cave-drips.mp3` — "Water Dripping in Cave.wav", Sclolex, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/177958/>
+- `dungeon-air.mp3` — "Dungeon Air", Flamiffer, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/530161/>
+- `dungeon-dark.mp3` — "Dark Dungeon Ambience", Kinoton, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/516566/>
+- `town-street.mp3` — "230520_2437_FR_TouristsStreet.wav", kevp888, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/690168/>
+- `town-village.mp3` — "medieval_village_atmosphere.wav", ramonmineiro, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/578072/>
+- `town-bells.mp3` — "Rostrenen bells market day", bruno.auzet, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/826902/>
+- `tavern.mp3` — "Tavern_Ambience_Inside_Laughter.WAV", ivolipa, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/326313/>
+- `house-fireplace.mp3` — "Aachen_Burning Fireplace Crackling Fire Sounds.wav", visionear, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/501417/>
+- `water-stream.mp3` — "Stream River Water Up Close", jackthemurray, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/433589/>
+- `water-brook.mp3` — "Woodland Stream March 2016.wav", plantmonkey, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/376709/>
+- `swamp-night.mp3` — "Lake At Night.aif", timgormly, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/148318/>
+- `swamp-lilypads.mp3` — "Lilipads and frogs at night.wav", Danjocross, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/503206/>
+- `swamp-frogs.mp3` — "swamp frogs.wav", Tomlija, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), <https://freesound.org/s/99193/>
+- `swamp-april.mp3` — "swamp April SHORT NL 01 130416_00.wav", klankbeeld, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/193032/>
+- `fire-campfire.mp3` — "campfire_01.wav", matucha, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/170247/>
+- `fire-bonfire.mp3` — "Nighttime Bonfire 2", samararaine, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/187079/>
