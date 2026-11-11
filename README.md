@@ -71,6 +71,31 @@ Doors in outer walls stay visible. On the Walls layer all icons show.
 
 When a token burrows (the "Burrow" movement action), a hole and a pile of dug-up earth stay where it went underground, and another where it came out. The colour is taken from the floor image, so grass, sand and snow each get their own hole. Burrows are stored in the scene (the `burrows` flag, written by the GM), visible to everyone and survive a reload. Fill them in from the scene window, "Ambience" tab, or with `game.modules.get("burn-living-map").api.clearBurrows()`. No burrow is left in water, lava or swamp.
 
+## Rifts
+
+Anomalies in the floor: tears in reality. A rift is the "Rift" region effect. Nothing needs to be painted on the map, because the shader draws the whole thing.
+
+- **Look.** A torn gap runs along the long side of the region with a black void inside, full of stars and wisps of nebula. The rim is white-hot and has colour fringes. Around it the floor is scorched, cracks spread from the rim, and waves of light run along them. Rings of time spread out from the gap, and motes get pulled in. Every few seconds time glitches: for a third of a second everything rewinds and then jumps forward, and the rim splits into colours. Colour: violet, cyan, gold or crimson.
+- **Opening and closing.** The gap grows from the middle to the ends in about 2 s and closes the same way. Everyone with the scene on screen sees it.
+- **By hand.** Draw a region of any shape and pick "Animate as: Rift" in the region window. The gap follows the region's main axis. A circle gets a random direction, the same for every player.
+- **With the macro** ("Rift" in the Paradigma world):
+  - **Open rifts with the mouse.** Drag across the floor and a rift lies along the drag. A click opens a rift in a random direction. You can place several in a row; Esc or right-click stops.
+  - **Anomaly storm.** Rifts open and fade by themselves in the visible part of the scene, around tokens or inside a selected region. You set how many at once, how often a new one appears and how long each lasts.
+  - **Stop the storm** or **close every rift on the scene.**
+- **Light.** A rift from the macro has a Foundry light. It shows in the dark, lights up nearby tokens and goes away with the rift.
+- **Lifetime.** A rift with a lifetime closes by itself. After a reload the active GM picks the timers up again. A storm stops when the GM reloads, and rifts already open live out their time.
+
+From the console or your own macro: `game.modules.get("burn-living-map").api.rift`.
+
+| Function | What it does |
+|---|---|
+| `open({x, y, length, width, angle, color, life, light})` | Open a rift. Position in scene pixels, sizes in grid squares, angle in degrees, `color` from 0 to 3, `life` in seconds (0 means it stays until closed) |
+| `place(opts)` | Place a rift with the mouse |
+| `close(region)` | Close one rift |
+| `closeAll({storm})` | Close every rift on the scene |
+| `storm({count, every, life, length: [min, max], area: "view" \| "tokens" \| "region", radius})` | Start an anomaly storm |
+| `calm()` | Stop the storm |
+
 ## Footsteps
 
 When a token walks, everyone hears footsteps on what it steps on. The surface is decided in order:

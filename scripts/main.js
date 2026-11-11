@@ -11,6 +11,7 @@ import { registerRoofs } from "./roofs.js";
 import { registerMachines, rebuildMachines } from "./machines.js";
 import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
+import { RIFT, riftUniforms, openness, riftApi } from "./rift.js";
 
 // 🔥 Wild Canvas. Область сцены с пометкой `flags.burn-living-map.effect`
 // оживает: поверх картинки ложится меш с шейдером эффекта. Меш живёт в
@@ -95,7 +96,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
-  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildScuppers, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS };
+  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildScuppers, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS, rift: riftApi };
   Hooks.callAll("hubRegisterTile", {
     moduleId: MODULE_ID,
     title: loc("Title"),
@@ -262,7 +263,7 @@ function makeZone(region, effect, cuts) {
   if (!tri?.indices?.length) return null;
   const grid = canvas.grid.size;
   // Поля вокруг: размытый край выходит за контур на полклетки.
-  const pad = grid * (effect === "fire" ? SMOKE_REACH : effect === "waterfall" ? 2.5 : 0.5);
+  const pad = grid * (effect === "fire" ? SMOKE_REACH : effect === "waterfall" ? 2.5 : effect === RIFT ? 1 : 0.5);
   const b = region.bounds.clone().pad(pad);
   const mask = drawMask(tri, b, grid);
 
@@ -284,7 +285,9 @@ function makeZone(region, effect, cuts) {
     uGrid: grid,
     uCenter: new Float32Array([raw.center.x / grid, raw.center.y / grid]),
     uRadius: Math.min(raw.width, raw.height) / grid / 2,
-    uFishSeed: fishSeed()
+    uFishSeed: fishSeed(),
+    // Разлом: ось и размер щели по форме области, насколько открыт (см. rift.js).
+    ...(effect === RIFT ? riftUniforms(region, grid) : {})
   });
   const mesh = new PIXI.Mesh(geometry, shader);
   mesh.name = `${MODULE_ID}.${region.id}`;
@@ -294,7 +297,7 @@ function makeZone(region, effect, cuts) {
   mesh.eventMode = "none";
   mesh.blmLevel = level;
   canvas.primary.addChild(mesh);
-  return { region, mesh, mask, cut, clock: performance.now() / 1000 % 3600 };
+  return { region, effect, mesh, mask, cut, clock: performance.now() / 1000 % 3600 };
 }
 
 /** Силуэт области в низком разрешении, размытый: 1 внутри, 0 снаружи. */
@@ -359,6 +362,7 @@ function tick() {
     // Часы копят время со своей скоростью, поэтому смена скорости не дёргает картинку.
     zone.clock = (zone.clock + dt * look(region, SPEED.key)) % 3600;
     mesh.shader.uniforms.uTime = zone.clock;
+    if (zone.effect === RIFT) mesh.shader.uniforms.uOpen = openness(region);
     // На многоэтажной сцене — только на видимых этажах.
     mesh.visible = mesh.blmLevel?.isVisible ?? true;
   }
@@ -403,13 +407,15 @@ Hooks.on("renderRegionConfig", (app, element) => {
       <p class="hint" data-blm="fountain">${loc("Effect.FountainHint")}</p>
       <p class="hint" data-blm="water lava swamp fog">${loc("Effect.Hint")}</p>
       <p class="hint" data-blm="fire">${loc("Effect.FireHint")}</p>
+      <p class="hint" data-blm="${RIFT}">${loc("Effect.RiftHint")}</p>
       <p class="hint" data-blm="${CUT}">${loc("Effect.CutHint")}</p>
     </div>
     ${slider(SPEED, EFFECTS.join(" "))}
     ${sliders}`;
   tab.append(set);
   soundField(app, set);
-  const select = set.querySelector("select");
+  // Именно список эффектов: soundField уже вставил перед ним выбор «Звук внутри».
+  const select = set.querySelector(`select[name="flags.${MODULE_ID}.effect"]`);
   const show = () => {
     for (const el of set.querySelectorAll("[data-blm]")) {
       el.style.display = el.dataset.blm.split(" ").includes(select.value) ? "" : "none";

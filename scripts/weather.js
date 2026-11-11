@@ -510,7 +510,7 @@ function dryMask(r) {
   wet.beginFill(0x000000, 1);
   for (const reg of canvas.scene.regions) {
     const e = reg.flags?.[MODULE_ID]?.effect;
-    if (!["water", "waterfall", "lava", "swamp", "fire"].includes(e)) continue;
+    if (!["water", "waterfall", "lava", "swamp", "fire", "rift"].includes(e)) continue;
     const tri = reg.triangulation;
     if (!tri?.indices?.length) continue;
     const v = tri.vertices, ix = tri.indices;

@@ -713,7 +713,166 @@ void main() {
   gl_FragColor = vec4(o * m * uStrength, 0.0);
 }`;
 
-export const FRAG = { water: WATER, waterfall: WATERFALL, fountain: FOUNTAIN, lava: LAVA, swamp: SWAMP, fog: FOG, fire: FIRE, neon: NEON };
+// Разлом: трещина в реальности посреди пола. Карта ничего не должна знать —
+// разлом рисуется целиком: зубчатая щель вдоль длинной оси области (uAxis,
+// полуоси uHalf в клетках), внутри — пустота со звёздами и туманностью, по краю
+// раскалённая кромка с цветными тенями, вокруг тёмный ожог, трещины в полу,
+// по которым бегут волны света, кольца-волны времени и искры, которые
+// затягивает внутрь. Раз в несколько секунд время сбоит: на треть секунды всё
+// отматывается назад и прыгает вперёд, кромка расслаивается по цветам.
+// uOpen 0..1 — открытие и закрытие (щель растёт от середины к концам).
+const RIFT = COMMON + `
+uniform vec2 uAxis, uHalf;
+uniform float uOpen, uSeed, uRiftGlow, uRiftCracks, uRiftMotes, uRiftColor;
+vec3 riftTint() {
+  if (uRiftColor < 0.5) return vec3(0.62, 0.38, 1.0);
+  if (uRiftColor < 1.5) return vec3(0.3, 0.85, 1.0);
+  if (uRiftColor < 2.5) return vec3(1.0, 0.76, 0.3);
+  return vec3(1.0, 0.27, 0.35);
+}
+// Трещины лучами от щели: через каждые 0,8 клетки вдоль оси — своя ломаная наружу,
+// с каждой стороны своя длина или её нет. a — вдоль оси, off — от кромки наружу,
+// side — сторона. Возвращает силу линии и сколько пройдено от кромки (0..1).
+vec2 cracksOf(float a, float off, float side) {
+  float best = 0.0, run = 1.0;
+  for (int k = -1; k <= 1; k++) {
+    float lane = floor(a / 0.8) + float(k);
+    float id = lane * side + uSeed;
+    if (hash(vec2(id, 47.0)) < 0.3) continue;
+    float h = hash(vec2(id, 31.0));
+    float len = (0.4 + 1.5 * hash(vec2(id, 5.0))) * (0.6 + 0.4 * min(uHalf.y, 2.0));
+    if (off < -0.05 || off > len) continue;
+    float s = off * 5.0;
+    float zi = floor(s);
+    float zz = mix(hash(vec2(zi, id)), hash(vec2(zi + 1.0, id)), fract(s)) - 0.5;
+    float jit = noise(vec2(off * 16.0, id)) - 0.5;
+    float ac = (lane + 0.2 + 0.6 * h) * 0.8 + zz * 0.3 + jit * 0.05 + off * (h - 0.5) * 0.9;
+    float thick = 0.03 * (1.0 - off / len) + 0.007;
+    float line = smoothstep(thick, thick * 0.3, abs(a - ac)) * smoothstep(len, len * 0.5, off);
+    if (line > best) { best = line; run = off / len; }
+  }
+  return vec2(best, run);
+}
+// Середина щели поперёк оси: ломаная по отрезкам, плавный изгиб и мелкая зубчатость.
+float spine(float a) {
+  float n = max(3.0, uHalf.x * 1.6);
+  float s = (a / uHalf.x * 0.5 + 0.5) * n;
+  float i = floor(s);
+  float zig = mix(hash(vec2(i, uSeed)), hash(vec2(i + 1.0, uSeed)), fract(s)) - 0.5;
+  float bend = noise(vec2(a * 0.45 + uSeed, uSeed)) - 0.5;
+  float jag = noise(vec2(a * 5.0, uSeed * 1.7)) - 0.5;
+  return zig * min(uHalf.y, 1.2) * 0.55 + bend * uHalf.y * 0.5 + jag * 0.08;
+}
+void main() {
+  float m = mask() * keep();
+  if (m < 0.01) discard;
+  vec2 p = vPos / uGrid;
+  vec2 rel = p - uCenter;
+  float a = dot(rel, uAxis);
+  float b = dot(rel, vec2(-uAxis.y, uAxis.x));
+  float t = uTime;
+  // Сбой времени: в каждом пятисекундном окне в случайный миг на 0,35 с время идёт назад втрое быстрее.
+  float cyc = floor(t / 5.0);
+  float at = t - cyc * 5.0;
+  float g0 = 1.0 + 3.0 * hash(vec2(cyc, uSeed + 3.1));
+  float glitch = step(g0, at) * step(at, g0 + 0.35);
+  float tt = t - glitch * (at - g0) * 4.0;
+  float open = clamp(uOpen, 0.0, 1.0);
+  float flash = 1.0 + 6.0 * open * (1.0 - open);
+  vec3 tint = riftTint();
+  float flick = 0.85 + 0.15 * noise(vec2(tt * 7.0, uSeed));
+
+  // Щель: ширина сходит на нет к концам, дышит и гуляет.
+  float u = a / max(uHalf.x, 0.5);
+  float reach = max(open * open * (3.0 - 2.0 * open), 0.001);
+  float taper = pow(max(0.0, 1.0 - (u / reach) * (u / reach)), 0.6);
+  float breath = 0.85 + 0.15 * sin(tt * 1.7 + u * 3.0);
+  float wob = 0.65 + 0.7 * noise(vec2(a * 1.3 + uSeed, tt * 0.25));
+  // Рваный край: мелкие зубцы и редкие сколы.
+  float tear = 0.78 + 0.34 * noise(vec2(a * 7.0, uSeed + 2.0)) - 0.3 * pow(noise(vec2(a * 13.0, uSeed + 9.0)), 3.0);
+  float width = uHalf.y * 0.32 * taper * breath * wob * tear * open;
+  float c = spine(a);
+  float dist = abs(b - c);
+  // Расстояние до щели целиком: за её концами — до кончика.
+  float beyond = max(abs(u) - reach, 0.0) * uHalf.x;
+  float gap = length(vec2(beyond, max(dist - width, 0.0)));
+  float tail = smoothstep(reach + 0.25, reach, abs(u));
+
+  vec4 o = vec4(0.0);
+  // Ожог вокруг: пол темнеет и отливает цветом разлома.
+  o = over(o, mix(vec3(0.03, 0.0, 0.05), tint * 0.08, 0.5), clamp(exp(-gap / 0.45) * 0.4 * open, 0.0, 1.0));
+
+  // Трещины в полу расходятся от кромки; по ним от щели бегут волны света.
+  float side = b - c >= 0.0 ? 1.0 : -1.0;
+  vec2 cr = cracksOf(a, dist - width, side) * vec2(tail * open * uRiftCracks, 1.0);
+  o = over(o, vec3(0.02, 0.0, 0.03), clamp(cr.x * 0.85, 0.0, 1.0));
+  float wave = 0.5 + 0.5 * sin((dist - width) * 6.0 - tt * 3.0);
+  o.rgb += tint * cr.x * (0.35 + 1.1 * wave * wave) * (1.0 - cr.y * 0.6) * flick;
+
+  // Волны времени: кольца расходятся от щели.
+  for (int k = 0; k < 2; k++) {
+    float rp = fract(tt * 0.22 + float(k) * 0.5 + hash(vec2(uSeed, 1.0)));
+    float rr = rp * (1.0 + uHalf.y * 1.3);
+    float ring = exp(-abs(gap - rr) / 0.05) * (1.0 - rp) * smoothstep(0.0, 0.1, rp);
+    o.rgb += tint * ring * 0.3 * uRiftGlow * open;
+  }
+
+  // Свечение наружу (до пустоты: внутри щели его закроет темнота).
+  o.rgb += tint * exp(-gap / (0.2 + 0.25 * uRiftGlow)) * 0.45 * flick * flash * open * uRiftGlow;
+
+  // Пустота внутри щели: туманность и звёзды плывут против хода времени.
+  float inside = smoothstep(width, width - 0.05, dist) * step(0.002, width) * step(abs(u), reach);
+  if (inside > 0.0) {
+    vec2 v = vec2(a, b - c);
+    // Туманность медленно закручивается; второй цвет — дополнительный к цвету разлома.
+    float sw = sin(tt * 0.15), cw = cos(tt * 0.15);
+    vec2 vr = mat2(cw, -sw, sw, cw) * v;
+    float neb = fbm(vr * 1.3 + uSeed);
+    float neb2 = fbm(vr * 2.2 - vec2(tt * 0.1, 0.0) + uSeed + 7.0);
+    vec3 voidc = vec3(0.005, 0.0, 0.015);
+    // Тонкие клочья, не заливка: сквозь щель видна чернота.
+    voidc += tint * 0.22 * smoothstep(0.62, 0.9, neb);
+    voidc += (vec3(1.0) - tint) * 0.08 * smoothstep(0.66, 0.9, neb2);
+    for (int k = 0; k < 2; k++) {
+      float z = 6.0 + float(k) * 6.0;
+      vec2 sv = v * z + vec2(-tt * (0.35 + float(k) * 0.4), float(k) * 3.7);
+      vec2 sc = floor(sv);
+      float sh = hash(sc + uSeed + float(k) * 11.0);
+      vec2 sp = sc + 0.2 + 0.6 * vec2(hash(sc + 2.3), hash(sc + 5.1));
+      float sd = length(sv - sp);
+      float tw = (0.6 + 0.4 * sin(tt * 3.0 + sh * 30.0)) * step(0.75, sh);
+      // Ядро звезды и мягкий ореол в цвет разлома.
+      voidc += (vec3(0.95, 0.95, 1.0) * smoothstep(0.16, 0.0, sd) + tint * 0.35 * smoothstep(0.45, 0.0, sd)) * tw * (1.2 - float(k) * 0.45);
+    }
+    // У самой кромки пустота подсвечена — видно глубину.
+    voidc += tint * pow(smoothstep(width * 0.7, width, dist), 3.0) * 0.35;
+    o = over(o, voidc, inside * 0.98);
+  }
+
+  // Кромка: три цвета чуть врозь, при сбое расходятся сильнее.
+  float ca = 0.012 + glitch * 0.12;
+  vec3 rim = vec3(exp(-abs(dist - width - ca) / 0.03), exp(-abs(dist - width) / 0.03), exp(-abs(dist - width + ca) / 0.03));
+  o.rgb += rim * mix(vec3(1.0), tint, 0.35) * 1.1 * flick * flash * tail * uRiftGlow;
+
+  // Искры: летят к щели с обеих сторон и гаснут на кромке.
+  for (int k = 0; k < 3; k++) {
+    float fk = float(k);
+    float lane = floor(a * 1.5 + fk * 0.31);
+    float h = hash(vec2(lane + fk * 13.0, uSeed));
+    float ph = fract(tt * (0.12 + 0.1 * h) + h * 7.0);
+    float sd = hash(vec2(lane, fk + uSeed + 4.0)) < 0.5 ? -1.0 : 1.0;
+    float ma = (lane + 0.2 + 0.6 * hash(vec2(lane, fk + 8.0)) - fk * 0.31) / 1.5;
+    float mb = c + sd * (width + (1.0 - ph) * (0.6 + uHalf.y * 0.8));
+    float dd = length(vec2(a - ma, b - mb));
+    float alive = step(0.45, h) * smoothstep(0.0, 0.25, ph) * smoothstep(1.0, 0.85, ph) * smoothstep(reach, reach * 0.7, abs(ma) / max(uHalf.x, 0.5));
+    o.rgb += mix(tint, vec3(1.0), 0.5) * smoothstep(0.07, 0.0, dd) * alive * uRiftMotes * open * 1.4;
+  }
+
+  // Мягко к краю области: у нарисованной вручную не проступает её контур.
+  gl_FragColor = o * uStrength * smoothstep(0.05, 0.95, m);
+}`;
+
+export const FRAG = { water: WATER, waterfall: WATERFALL, fountain: FOUNTAIN, lava: LAVA, swamp: SWAMP, fog: FOG, fire: FIRE, neon: NEON, rift: RIFT };
 
 // Горящий токен: кольцо пламени по краю. vPos — точка меша в пикселях от середины
 // токена, uRadius — радиус токена в пикселях. Внутри токена пламя только у самого
@@ -746,5 +905,6 @@ export const PARAMS = {
   swamp: [{ key: "murk", max: 2 }, { key: "bubbles", max: 2 }],
   fog: [{ key: "density", max: 2 }],
   neon: [{ key: "pulses", max: 2 }, { key: "seams", max: 2 }, { key: "neonColor", initial: 0, fixed: true, choices: ["cyan", "magenta", "amber"] }],
+  rift: [{ key: "riftGlow", max: 2 }, { key: "riftCracks", max: 2 }, { key: "riftMotes", max: 2 }, { key: "riftColor", initial: 0, fixed: true, choices: ["violet", "cyan", "gold", "crimson"] }],
   fire: [{ key: "flame", max: 2 }, { key: "smoke", max: 2 }, { key: "wind", max: 360, step: 5, initial: 210, fixed: true }, { key: "spread", max: 1, step: 0.05, initial: 0, fixed: true }]
 };
