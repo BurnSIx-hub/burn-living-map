@@ -7,6 +7,14 @@
 // по настоящей линии взгляда). Крыша, что сейчас растворилась (под ней свой токен),
 // не дорисовывается: внутри видно как обычно.
 //
+// Виден ли край — решает сам Foundry (`testVisibility`): днём под общим светом
+// токен видит всю улицу, а круг его зрения бывает в клетку.
+//
+// Контур крыши — пометка тайла `outline` (Картограф кладёт её крышам из OSM:
+// кольца в долях тайла, двор — `hole`). У повёрнутого дома прямоугольник тайла
+// захватывает улицу и чужие дворы: по нему край не виден, а раскрылось бы лишнее.
+// Без пометки контур — прямоугольник тайла (свои крыши Картографа такие и есть).
+//
 // Значок двери под непрозрачной крышей не показывается никому, и Мастеру тоже:
 // на крыше он висел поверх черепицы. Дверь в наружной стене остаётся — её край
 // выходит из-под крыши. На слое стен видны все.
@@ -19,6 +27,8 @@
 // (`restrictions`), как выгружает Картограф; крона дерева (`wind`) — не крыша.
 
 const MODULE_ID = "burn-living-map";
+/** Край крыши — точки на столько клеток наружу от стены. */
+const RIM_OUT = 0.4;
 
 function isRoof(tile) {
   const d = tile.document;
@@ -35,55 +45,116 @@ function roofs() {
   return canvas.tiles.placeables.filter(isRoof);
 }
 
-/** Углы тайла на сцене (x, y документа — середина тайла). */
-function corners(tile) {
-  const s = tile.document.shape ?? tile.document;
-  const { width: w, height: h } = tile.document;
-  const r = (((s.rotation ?? tile.document.rotation) || 0) * Math.PI) / 180;
+/** Точка тайла по долям (0..1 от левого верхнего угла) — на сцену, с поворотом.
+ * x, y документа — середина тайла. */
+function placer(tile) {
+  const d = tile.document;
+  const s = d.shape ?? d;
+  const { width: w, height: h } = d;
+  const r = (((s.rotation ?? d.rotation) || 0) * Math.PI) / 180;
   const [c, sn] = [Math.cos(r), Math.sin(r)];
-  return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([x, y]) => ({ x: s.x + x * c - y * sn, y: s.y + x * sn + y * c }));
+  return (u, v) => {
+    const x = (u - 0.5) * w, y = (v - 0.5) * h;
+    return { x: s.x + x * c - y * sn, y: s.y + x * sn + y * c };
+  };
 }
 
-/** Точка сцены внутри прямоугольника тайла (с учётом поворота). Картинки крыш
- * заполняют тайл целиком, прозрачность не проверяем. */
-function inside(tile, p) {
-  const s = tile.document.shape ?? tile.document;
-  const { width: w, height: h } = tile.document;
-  const r = -(((s.rotation ?? tile.document.rotation) || 0) * Math.PI) / 180;
-  const dx = p.x - s.x, dy = p.y - s.y;
-  const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
-  return Math.abs(lx) <= w / 2 && Math.abs(ly) <= h / 2;
+/** Внутри колец по чётности: двор — снаружи. */
+function inRings(rings, p) {
+  let c = false;
+  for (const { pts } of rings) {
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[i], b = pts[j];
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+    }
+  }
+  return c;
 }
 
-/** Точки чуть снаружи края крыши: видна хоть одна — видна крыша. */
-function rim(tile) {
-  const cs = corners(tile);
-  const mid = cs.reduce((m, p) => ({ x: m.x + p.x / 4, y: m.y + p.y / 4 }), { x: 0, y: 0 });
-  const out = canvas.grid.size * 0.4;
+/** Точки чуть снаружи крыши вдоль каждой стены (и внутрь дворов): видна хоть
+ * одна — видна крыша. Шаг — полклетки, но не меньше точки на сторону. */
+function rimOf(rings) {
+  const g = canvas.grid.size;
+  const out = g * RIM_OUT;
   const pts = [];
-  for (let i = 0; i < 4; i++) {
-    const a = cs[i], b = cs[(i + 1) % 4];
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    const steps = Math.max(2, Math.ceil(len / (canvas.grid.size / 2)));
-    for (let k = 0; k <= steps; k++) {
-      const p = { x: a.x + ((b.x - a.x) * k) / steps, y: a.y + ((b.y - a.y) * k) / steps };
-      const dx = p.x - mid.x, dy = p.y - mid.y;
-      const d = Math.hypot(dx, dy) || 1;
-      pts.push({ x: p.x + (dx / d) * out, y: p.y + (dy / d) * out });
+  for (const { pts: ring } of rings) {
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 1) continue;
+      const [nx, ny] = [(b.y - a.y) / len, -(b.x - a.x) / len];
+      const steps = Math.max(1, Math.ceil(len / (g / 2)));
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        const q = { x: p.x + nx * out, y: p.y + ny * out };
+        pts.push(inRings(rings, q) ? { x: p.x - nx * out, y: p.y - ny * out } : q);
+      }
     }
   }
   return pts;
 }
 
+/** Контур крыши на сцене, её край и рамка; считаем заново, только когда тайл
+ * сдвинули, повернули или растянули. */
+const shapes = new WeakMap();
+function shapeOf(tile) {
+  const d = tile.document;
+  const s = d.shape ?? d;
+  const sig = [s.x, s.y, d.width, d.height, s.rotation ?? d.rotation].join(",");
+  const old = shapes.get(tile);
+  if (old?.sig === sig) return old;
+  const at = placer(tile);
+  const own = d.flags?.[MODULE_ID]?.outline;
+  let rings = Array.isArray(own)
+    ? own.filter((r) => r?.points?.length >= 6).map((r) => {
+        const pts = [];
+        for (let i = 0; i + 1 < r.points.length; i += 2) pts.push(at(r.points[i], r.points[i + 1]));
+        return { pts, hole: !!r.hole };
+      })
+    : [];
+  if (!rings.length) rings = [{ pts: [at(0, 0), at(1, 0), at(1, 1), at(0, 1)], hole: false }];
+  const all = rings.flatMap((r) => r.pts);
+  const xs = all.map((p) => p.x), ys = all.map((p) => p.y);
+  const pad = canvas.grid.size;
+  const box = new PIXI.Rectangle(Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) - Math.min(...xs) + 2 * pad, Math.max(...ys) - Math.min(...ys) + 2 * pad);
+  const shape = { sig, rings, rim: rimOf(rings), box };
+  shapes.set(tile, shape);
+  return shape;
+}
+
+/** Точка сцены под крышей (по контуру, дворы — снаружи). */
+function inside(tile, p) {
+  const sh = shapeOf(tile);
+  return sh.box.contains(p.x, p.y) && inRings(sh.rings, p);
+}
+
+/** Крыша в маску видимости: каждое внешнее кольцо со своими дворами-дырами. */
+function drawRoof(sight, rings) {
+  const flat = (r) => r.pts.flatMap((p) => [p.x, p.y]);
+  const holes = rings.filter((r) => r.hole);
+  for (const outer of rings.filter((r) => !r.hole)) {
+    sight.drawPolygon(flat(outer));
+    const own = holes.filter((h) => inRings([outer], h.pts[0]));
+    if (!own.length) continue;
+    sight.beginHole();
+    for (const h of own) sight.drawPolygon(flat(h));
+    sight.endHole();
+  }
+}
+
 function drawSeenRoofs(group) {
   const sight = group.vision?.sight;
   if (!sight) return;
-  const sources = [...canvas.effects.visionSources].filter((s) => s.active && !s.isPreview && !s.isBlinded && s.radius > 0);
+  const sources = [...canvas.effects.visionSources].filter((s) => s.active && !s.isPreview && !s.isBlinded);
   if (!sources.length) return;
+  const reach = sources.map((s) => s.los?.bounds ?? s.los?.getBounds?.()).filter(Boolean);
   for (const tile of roofs()) {
     if (tile.occluded) continue;
-    const seen = rim(tile).some((p) => sources.some((s) => s.shape?.contains(p.x, p.y)));
-    if (seen) sight.drawPolygon(corners(tile).flatMap((p) => [p.x, p.y]));
+    const sh = shapeOf(tile);
+    // Крыша далеко за линией взгляда всех токенов — край не проверяем.
+    if (reach.length && !reach.some((b) => b.intersects(sh.box))) continue;
+    if (sh.rim.length && canvas.visibility.testVisibility(sh.rim, { tolerance: 0 })) drawRoof(sight, sh.rings);
   }
 }
 

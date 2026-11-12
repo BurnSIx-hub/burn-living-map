@@ -6,6 +6,8 @@
 // Флаги сцены: `clouds` — сила (0 — выкл), `cloudCover` — густота. Окно сцены,
 // вкладка «Окружение». Картограф ставит их лесу и кварталу.
 // Ночью (тьма сцены) тени гаснут, под снегом Foundry — мягче.
+// Под растворившейся крышей (токен в доме) тени нет: та же маска глубины Foundry,
+// что прячет там дождь, — синий канал у крыш, не пускающих погоду.
 
 import { wind } from "./wind.js";
 
@@ -26,8 +28,11 @@ precision highp float;
 precision mediump float;
 #endif
 varying vec2 vPos;
+varying vec2 vMask;
 uniform float uGrid, uShade, uDensity, uSun, uSize;
 uniform vec2 uOffset;
+uniform sampler2D uDepth;
+uniform bool uUseDepth;
 
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float noise(vec2 p) {
@@ -52,6 +57,8 @@ void main() {
   float c = smoothstep(thr, thr + 0.06, n);
   // Тень плюс общее притенение, пока солнце прикрыто.
   float a = clamp(uShade * (c + 0.75 * uSun), 0.0, 0.7);
+  // Под крышей, что растворилась над токеном, неба не видно.
+  if (uUseDepth) a *= 1.0 - step(0.5 / 255.0, texture2D(uDepth, vMask).b);
   // Тень холодная: синевато-серая, не чёрная. Умножение: dst * (tint*a + 1 - a).
   vec3 tint = vec3(0.34, 0.38, 0.46);
   gl_FragColor = vec4(tint * a, a);
@@ -61,10 +68,15 @@ const VERT = `
 attribute vec2 aVertexPosition;
 uniform mat3 projectionMatrix;
 uniform mat3 translationMatrix;
+uniform vec2 screenDimensions;
 varying vec2 vPos;
+varying vec2 vMask;
 void main() {
   vPos = aVertexPosition;
-  gl_Position = vec4((projectionMatrix * translationMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);
+  vec3 tPos = translationMatrix * vec3(aVertexPosition, 1.0);
+  // Как у мешей Foundry: маски экранного размера, координата — от экрана.
+  vMask = tPos.xy / screenDimensions;
+  gl_Position = vec4((projectionMatrix * tPos).xy, 0.0, 1.0);
 }`;
 
 let mesh = null;
@@ -91,7 +103,10 @@ export function rebuildClouds() {
   const geometry = new PIXI.Geometry().addAttribute("aVertexPosition", verts, 2).addIndex(new Uint16Array([0, 1, 2, 0, 2, 3]));
   const shader = PIXI.Shader.from(VERT, FRAG, {
     uGrid: canvas.grid.size, uShade: 0, uDensity: density, uSun: 0, uSize: SIZE,
-    uOffset: new Float32Array([Math.random() * 500, Math.random() * 500])
+    uOffset: new Float32Array([Math.random() * 500, Math.random() * 500]),
+    uDepth: canvas.masks?.depth?.renderTexture ?? PIXI.Texture.EMPTY,
+    uUseDepth: !!canvas.masks?.depth?.renderTexture,
+    screenDimensions: canvas.screenDimensions
   });
   mesh = new PIXI.Mesh(geometry, shader);
   mesh.name = `${MODULE_ID}.clouds`;
@@ -144,6 +159,11 @@ function tick() {
   const u = mesh.shader.uniforms;
   u.uOffset[0] = off.x;
   u.uOffset[1] = off.y;
+  // Окно меняют — Foundry подменяет и размер экрана, и текстуру маски.
+  u.screenDimensions = canvas.screenDimensions;
+  const depth = canvas.masks?.depth?.renderTexture;
+  u.uUseDepth = !!depth;
+  if (depth) u.uDepth = depth;
   u.uDensity = density;
   u.uSun = sun.v * snow;
   u.uShade = shade * game.settings.get(MODULE_ID, "strength") * snow * Math.max(0, 1 - dark * 1.2) * 0.45;

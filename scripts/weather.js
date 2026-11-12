@@ -496,14 +496,21 @@ function dryMask(r) {
   root.position.set(-r.x * s, -r.y * s);
   const sky = root.addChild(new PIXI.Graphics());
   sky.beginFill(0xffffff, 1).drawRect(r.x, r.y, r.width, r.height).endFill();
+  // Место, размер и поворот — из документа тайла, не из меша: в хуке
+  // `updateScene` (Мастер включил дождь) меш стоит ещё в своих координатах
+  // (середина — в половине размера), и лужи выходили в домах.
   for (const t of roofs()) {
     const m = t.mesh;
     if (!m.texture?.valid) continue;
+    const d = t.document;
     const sp = root.addChild(new PIXI.Sprite(m.texture));
-    sp.anchor.copyFrom(m.anchor);
-    sp.position.copyFrom(m.position);
-    sp.scale.copyFrom(m.scale);
-    sp.rotation = m.rotation;
+    sp.anchor.set(0.5, 0.5);
+    sp.position.set(d.x, d.y);
+    sp.width = d.width;
+    sp.height = d.height;
+    if ((d.texture?.scaleX ?? 1) < 0) sp.scale.x *= -1;
+    if ((d.texture?.scaleY ?? 1) < 0) sp.scale.y *= -1;
+    sp.angle = d.rotation ?? 0;
     sp.tint = 0x000000;
   }
   const wet = root.addChild(new PIXI.Graphics());
