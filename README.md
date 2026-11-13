@@ -13,6 +13,7 @@ the map image on every player's screen:
 - **waterfall** — streams run along the region's "Direction" (90° is down), foam churns at the bottom edge, mist creeps past it and spray flickers; louder than a stream and heard four squares away;
 - **fountain** — for a round fountain in three bowls (Cartographer's built-in one): a low jet with drops in the middle, water spills over each rim with foam below, rings spread from the middle to the edge; babbles three squares away;
 - **wind in the crowns** — tree crowns (tiles) sway, gusts roll through the forest;
+- **hover** — an airship or a balloon (tile) slowly drifts in a figure eight, turns a little and rises and sinks, while a soft shadow crawls over the ground and roofs below. In the tile window, "Appearance" tab, "Hover" — strength from 0 to 3. The gnome airship from Cartographer's steampunk set also spins its propellers and its runes pulse with light;
 - **burning tiles** — the tile itself burns (a house, a tree, a cart): in the tile window, "Appearance" tab, "Fire" — smouldering, burning or ablaze. The fire is the same as the region one: tongues spread from the hearths in every direction and lean with the fire wind; a small crown burns as one hearth in the middle. Flames appear only where the image is opaque (a baked semi-transparent shadow does not burn) and sway with the crown; smoke drifts above tokens with the fire wind, with Foundry light and the crackle of a large bonfire around it.
 
 The water or lava itself must already be painted on the map: the module adds
@@ -30,6 +31,9 @@ Players don't see the region as a region — only as the effect.
 The wind sways tiles flagged `flags.burn-living-map.wind`: Cartographer sets it
 on tree crowns on export. Flag your own tile from the console:
 `tile.document.setFlag("burn-living-map", "wind", 1)`.
+
+Tiles flagged `flags.burn-living-map.hover` (a number, the strength) float:
+Cartographer sets it on airships and balloons on export.
 
 Crowns flagged `flags.burn-living-map.particles` emit particles: `leaves` —
 falling leaves (their colour is taken from the crown image; in water a leaf makes
