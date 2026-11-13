@@ -35,6 +35,7 @@ uniform sampler2D uCut;
 uniform float uTime, uGrid, uSpeed, uStrength, uRadius;
 uniform float uRipple, uFoam, uCaustic, uGlint, uFish, uGlow, uSparks, uMurk, uBubbles, uDensity, uFlame, uSmoke, uWind;
 uniform float uFlow, uStreaks, uSpray, uJet, uSpill;
+uniform float uCurrent, uDrift;
 uniform vec2 uCenter;
 uniform vec2 uFishSeed;
 uniform float uFishKind;
@@ -186,6 +187,33 @@ vec4 fish(vec2 p, float t, float i, vec2 c, float R0) {
 // у реки часто на суше. Петля выходит за свою клетку, поэтому смотрим и соседние.
 const float FISH_CELL = 4.0;
 float maskAt(vec2 q) { return texture2D(uMask, (q * uGrid - uBounds.xy) / uBounds.zw).r; }
+// Течение: корабль на ходу стоит, а вода уходит мимо по uDrift. Что выше по
+// течению загораживает воду (корпус, остров), то оставляет за собой след.
+// Препятствием считается только дыра внутри области: за краем области и в её
+// полях вода — иначе след тянулся бы от края карты.
+float blocks(vec2 q) {
+  vec2 lo = (uBounds.xy / uGrid) + 1.0, hi = ((uBounds.xy + uBounds.zw) / uGrid) - 1.0;
+  if (q.x < lo.x || q.y < lo.y || q.x > hi.x || q.y > hi.y) return 0.0;
+  return 1.0 - smoothstep(0.15, 0.55, maskAt(q));
+}
+// След за корпусом: x — бурун прямо за кормой (корпус, снесённый по течению и
+// чуть расплывшийся), y — «усы»: края клина в ~20° от носа, как у настоящего
+// судна (клин Кельвина), тонкие у корпуса и шире вдали.
+vec2 wakeAt(vec2 p, vec2 fd) {
+  vec2 sd = vec2(-fd.y, fd.x);
+  float core = 0.0, wide = 0.0, inner = 0.0;
+  for (int k = 1; k <= 12; k++) {
+    float s = float(k) * 1.4;
+    float fall = 1.0 - float(k) / 13.0;
+    vec2 q = p - fd * s;
+    // Бурун уже корпуса (вода сходится за кормой) и вдали чуть шире.
+    float nar = max(0.6, 2.4 - s * 0.1);
+    core = max(core, min(blocks(q + sd * nar), blocks(q - sd * nar)) * fall * fall);
+    wide = max(wide, max(blocks(q + sd * s * 0.36), blocks(q - sd * s * 0.36)) * fall);
+    inner = max(inner, max(blocks(q + sd * s * 0.31), blocks(q - sd * s * 0.31)) * fall);
+  }
+  return vec2(core, clamp(wide - inner, 0.0, 1.0));
+}
 vec4 school(vec2 p, float t) {
   vec4 o = vec4(0.0);
   vec2 home = floor(p / FISH_CELL);
@@ -215,30 +243,69 @@ vec4 school(vec2 p, float t) {
 void main() {
   float m = mask();
   if (m < 0.01) discard;
-  vec2 p = vPos / uGrid;
+  vec2 p0 = vPos / uGrid;
   float t = uTime * uSpeed;
+  // Течение сносит весь узор воды: клеток в секунду, по направлению uDrift.
+  float cur = uCurrent;
+  float dr = radians(uDrift);
+  vec2 fd = vec2(cos(dr), sin(dr));
+  vec2 p = p0 - fd * t * cur;
   vec2 warp = vec2(fbm(p * 0.7 + vec2(t * 0.35, t * 0.22)), fbm(p * 0.7 + vec2(-t * 0.27, t * 0.33) + 5.2)) - 0.5;
   warp *= uRipple;
   float deep = smoothstep(0.55, 1.0, m);
-  // Волны темнее и светлее — вода дышит.
-  float swell = (fbm(p * 1.1 + warp * 1.5 + vec2(t * 0.05, 0.0)) - 0.5) * uRipple;
-  vec4 o = vec4(0.0, 0.0, 0.0, (0.1 + max(0.0, -swell) * 0.3) * deep);
-  o.rgb += vec3(0.6, 0.85, 1.0) * max(0.0, swell) * 0.05 * deep;
-  // Рыбки под водой: тень на дне, тело размыто рябью.
-  if (uFish > 0.01) {
-    vec2 fp = p + warp * 0.12;
+  // Волны темнее и светлее — вода дышит. На ходу гребни вытягиваются поперёк
+  // течения и бегут мимо борта.
+  vec2 sp = cur > 0.01 ? vec2(dot(p, fd) * 1.1, dot(p, vec2(-fd.y, fd.x)) * 0.5) : p * 1.1;
+  float swell = (fbm(sp + warp * (cur > 0.01 ? 0.7 : 1.5) + vec2(t * 0.05, 0.0)) - 0.5) * uRipple * (1.0 + min(cur, 2.0) * 0.25);
+  // На ходу ложбины мягкие, без резкого края: открытое море, а не кляксы.
+  float trough = cur > 0.01 ? smoothstep(0.0, 0.45, -swell) * 0.2 : max(0.0, -swell) * 0.3;
+  vec4 o = vec4(0.0, 0.0, 0.0, (0.1 + trough) * deep);
+  o.rgb += vec3(0.6, 0.85, 1.0) * (cur > 0.01 ? smoothstep(0.0, 0.4, swell) * 0.03 : max(0.0, swell) * 0.05) * deep;
+  // Барашки: редкие белые гребни, плывут с водой.
+  if (cur > 0.01) {
+    float cap = smoothstep(0.66, 0.8, fbm(sp * 0.9 + 11.0 + vec2(0.0, t * 0.06))) * smoothstep(0.45, 0.85, noise(p * 3.3 + vec2(t * 0.4, 0.0)));
+    o = over(o, vec3(0.92, 0.96, 1.0), clamp(cap * 0.32 * min(cur, 2.0), 0.0, 0.6) * deep);
+  }
+  // Рыбки под водой: тень на дне, тело размыто рябью. На ходу их не видно.
+  if (uFish > 0.01 && cur < 0.6) {
+    vec2 fp = p0 + warp * 0.12;
     vec4 sh = school(fp - vec2(0.09, 0.12), t);
     o = over(o, vec3(0.0), sh.a * 0.35 * deep * uFish);
     vec4 f = school(fp, t);
     o = over(o, f.rgb * 0.92, f.a * 0.85 * deep * uFish);
   }
-  o.rgb += vec3(0.85, 1.0, 1.0) * caustic(p * 1.25 + warp * 0.6, t * 0.6 + 23.0) * 0.16 * deep * uCaustic;
+  // Блики на дне видны на мелководье; в открытом море на ходу дна не видно.
+  float bottom = 1.0 - smoothstep(0.0, 0.5, cur);
+  if (bottom > 0.0) o.rgb += vec3(0.85, 1.0, 1.0) * caustic(p * 1.25 + warp * 0.6, t * 0.6 + 23.0) * 0.16 * deep * uCaustic * bottom;
   float glint = pow(noise(p * 9.0 + vec2(t * 1.5, -t)) * noise(p * 14.0 - vec2(t, t * 1.3)), 5.0);
   o.rgb += vec3(1.0) * smoothstep(0.25, 0.5, glint) * 0.3 * deep * uGlint;
   // Пена у берега: в полосе края маски, бегущими волнами.
   float band = smoothstep(0.08, 0.35, m) * (1.0 - smoothstep(0.45, 0.8, m));
   float waves = sin(m * 18.0 - t * 2.6 + fbm(p * 1.6) * 7.0) * 0.5 + 0.5;
   float foam = band * smoothstep(0.5, 0.95, waves * 0.65 + fbm(p * 5.0 + vec2(t * 0.6, 0.0)) * 0.55);
+  if (cur > 0.01) {
+    // Нос режет воду: где течение бьёт в берег, пена шире и гуще.
+    vec2 e = vec2(0.3, 0.0);
+    vec2 g = vec2(maskAt(p0 + e.xy) - maskAt(p0 - e.xy), maskAt(p0 + e.yx) - maskAt(p0 - e.yx));
+    float bow = max(0.0, -dot(g / (length(g) + 1e-4), fd)) * smoothstep(0.0, 0.05, length(g));
+    // Пена, вытянутая вдоль хода и бегущая с водой.
+    vec2 sd = vec2(-fd.y, fd.x);
+    vec2 fl = vec2(dot(p, fd) * 0.8, dot(p, sd) * 2.4);
+    float streak = fbm(fl * 1.4 + vec2(0.0, t * 0.15));
+    // Вода у самого борта темнее — тень корпуса, корабль сидит в воде, а не лежит на ней.
+    o = over(o, vec3(0.0), (1.0 - smoothstep(0.08, 0.45, m)) * 0.3);
+    // У борта — тонкая полоса, у носа — бурун шире и гуще.
+    float hullBand = smoothstep(0.04, 0.25, m) * (1.0 - smoothstep(0.35 + 0.3 * bow, 0.6 + 0.3 * bow, m));
+    foam = max(foam, hullBand * smoothstep(0.42, 0.68, streak + bow * 0.3) * (0.45 + bow) * min(cur, 2.0));
+    // След за кормой: бурун и расходящиеся усы.
+    vec2 w = wakeAt(p0, fd);
+    // Бурун — клочьями, с завихрением, а не струями.
+    vec2 fc = vec2(dot(p, fd) * 1.3, dot(p, sd) * 1.7);
+    float froth = fbm(fc * 1.8 + 3.0 + warp * 1.6 + vec2(sin(t * 0.7 + fc.y), cos(t * 0.5 + fc.x)) * 0.25);
+    foam = max(foam, w.x * smoothstep(0.48, 0.74, froth + w.x * 0.12) * 0.95 * min(cur, 1.5));
+    foam = max(foam, w.y * smoothstep(0.42, 0.64, streak) * 0.7 * min(cur, 1.5));
+    o.rgb += vec3(0.4, 0.6, 0.65) * w.x * 0.04 * deep;
+  }
   o = over(o, vec3(0.93, 0.97, 1.0), clamp(foam * uFoam, 0.0, 1.0) * 0.6);
   gl_FragColor = o * uStrength * smoothstep(0.0, 0.25, m) * keep();
 }`;
@@ -898,7 +965,7 @@ export const EFFECTS = Object.keys(FRAG);
  */
 export const SPEED = { key: "speed", min: 0.2, max: 3 };
 export const PARAMS = {
-  water: [{ key: "ripple", max: 2 }, { key: "foam", max: 2 }, { key: "caustic", max: 2 }, { key: "glint", max: 2 }, { key: "fish", max: 1 }, { key: "fishKind", initial: 0, fixed: true, choices: ["river", "sea", "koi"] }],
+  water: [{ key: "ripple", max: 2 }, { key: "foam", max: 2 }, { key: "caustic", max: 2 }, { key: "glint", max: 2 }, { key: "fish", max: 1 }, { key: "fishKind", initial: 0, fixed: true, choices: ["river", "sea", "koi"] }, { key: "current", max: 3, step: 0.1, initial: 0, fixed: true }, { key: "drift", max: 360, step: 5, initial: 90, fixed: true }],
   waterfall: [{ key: "streaks", max: 2 }, { key: "spray", max: 2 }, { key: "flow", max: 360, step: 5, initial: 90, fixed: true }],
   fountain: [{ key: "jet", max: 2 }, { key: "spill", max: 2 }, { key: "ripple", max: 2 }, { key: "glint", max: 2 }],
   lava: [{ key: "glow", max: 2 }, { key: "sparks", max: 2 }],
