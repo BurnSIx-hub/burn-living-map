@@ -296,7 +296,14 @@ void main() {
   float band = smoothstep(0.08, 0.35, m) * (1.0 - smoothstep(0.45, 0.8, m));
   float waves = sin(m * 18.0 - t * 2.6 + fbm(p * 1.6) * 7.0) * 0.5 + 0.5;
   float foam = band * smoothstep(0.5, 0.95, waves * 0.65 + fbm(p * 5.0 + vec2(t * 0.6, 0.0)) * 0.55);
+  // На ходу край области — борт: его стена вырезана из воды, а маска размыта
+  // на полклетки в обе стороны, так что при m < 0,5 под водой уже фальшборт.
+  // Пена, тень и сама вода начинаются от края, а не на досках.
+  float hull0 = cur > 0.01 ? 0.3 : 0.0;
   if (cur > 0.01) {
+    // Сплошной полосы прибоя на ходу нет — у борта рваная пена вдоль хода
+    // (ниже). Ровная полоса вокруг всего корпуса читалась льдом.
+    foam = 0.0;
     // Нос режет воду: где течение бьёт в берег, пена шире и гуще.
     vec2 e = vec2(0.3, 0.0);
     vec2 g = vec2(maskAt(p0 + e.xy) - maskAt(p0 - e.xy), maskAt(p0 + e.yx) - maskAt(p0 - e.yx));
@@ -306,10 +313,13 @@ void main() {
     vec2 fl = vec2(dot(p, fd) * 0.8, dot(p, sd) * 2.4);
     float streak = fbm(fl * 1.4 + vec2(0.0, t * 0.15));
     // Вода у самого борта темнее — тень корпуса, корабль сидит в воде, а не лежит на ней.
-    o = over(o, vec3(0.0), (1.0 - smoothstep(0.08, 0.45, m)) * 0.3);
-    // У борта — тонкая полоса, у носа — бурун шире и гуще.
-    float hullBand = smoothstep(0.04, 0.25, m) * (1.0 - smoothstep(0.35 + 0.3 * bow, 0.6 + 0.3 * bow, m));
-    foam = max(foam, hullBand * smoothstep(0.42, 0.68, streak + bow * 0.3) * (0.45 + bow) * min(cur, 2.0));
+    o = over(o, vec3(0.0), (1.0 - smoothstep(0.5, 0.78, m)) * 0.3);
+    // У борта — тонкая рваная полоса вдоль хода, у носа — бурун шире и гуще:
+    // там вода бьёт в борт и пена клубится клочьями, а не тянется штрихами.
+    float hullBand = smoothstep(0.32, 0.48, m) * (1.0 - smoothstep(0.66 + 0.14 * bow, 0.82 + 0.12 * bow, m));
+    float churn = fbm(p0 * 3.2 + warp * 1.2 + vec2(t * 0.4, -t * 0.3));
+    float tear = mix(streak, churn, smoothstep(0.2, 0.7, bow));
+    foam = max(foam, hullBand * smoothstep(0.4, 0.66, tear + bow * 0.12) * (0.4 + 0.5 * bow) * min(cur, 2.0));
     // След за кормой: бурун и расходящиеся усы.
     vec2 w = wakeAt(p0, fd);
     // Бурун — клочьями, с завихрением, а не струями.
@@ -320,7 +330,7 @@ void main() {
     o.rgb += vec3(0.4, 0.6, 0.65) * w.x * 0.04 * deep;
   }
   o = over(o, vec3(0.93, 0.97, 1.0), clamp(foam * uFoam, 0.0, 1.0) * 0.6);
-  gl_FragColor = o * uStrength * smoothstep(0.0, 0.25, m) * keep();
+  gl_FragColor = o * uStrength * smoothstep(hull0, hull0 + 0.25, m) * keep();
 }`;
 
 const LAVA = COMMON + `
