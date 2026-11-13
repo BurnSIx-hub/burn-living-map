@@ -9,6 +9,9 @@
 // Число в пометке — сила: 1 — крона, меньше — куст (лишь чуть колышется).
 // Пометка `rope` — верёвка с бельём: концы привязаны к стенам и стоят, а
 // середина провисает и колышется. Меш тогда не двигается: картинку гнёт фильтр.
+// Пометка `swing` — гамак: [x0, y0, x1, y1] — концы (крюки) в долях картинки
+// от её середины. Гнёт тот же фильтр, но качает не ветер, а качка судна: все
+// гамаки ходят в такт, каждый чуть со своей задержкой; ветра под палубой нет.
 
 const MODULE_ID = "burn-living-map";
 
@@ -27,7 +30,7 @@ uniform vec4 inputSize;
 uniform vec4 outputFrame;
 uniform vec4 inputClamp;
 uniform vec2 uA, uB;
-uniform float uAmp, uTime, uPhase, uBias;
+uniform float uAmp, uTime, uPhase, uBias, uWave;
 void main() {
   vec2 pos = vTextureCoord * inputSize.xy + outputFrame.xy;
   vec2 ab = uB - uA;
@@ -35,7 +38,7 @@ void main() {
   float u = clamp(dot(pos - uA, ab) / len2, 0.0, 1.0);
   vec2 n = vec2(-ab.y, ab.x) / sqrt(len2);
   float bow = sin(3.14159265 * u);
-  float w = uBias + 0.7 * sin(uTime * 1.4 + uPhase - u * 2.2) + 0.3 * sin(uTime * 3.3 + u * 8.0 + uPhase * 2.0);
+  float w = uBias + uWave * (0.7 * sin(uTime * 1.4 + uPhase - u * 2.2) + 0.3 * sin(uTime * 3.3 + u * 8.0 + uPhase * 2.0));
   vec2 src = pos - n * uAmp * bow * w;
   vec2 tc = (src - outputFrame.xy) * inputSize.zw;
   float inside = step(inputClamp.x, tc.x) * step(tc.x, inputClamp.z) * step(inputClamp.y, tc.y) * step(tc.y, inputClamp.w);
@@ -66,12 +69,23 @@ function roped(doc) {
   return !!doc.flags?.[MODULE_ID]?.rope;
 }
 
+/** Концы гамака из пометки `swing`, иначе null. */
+function swung(doc) {
+  const s = doc.flags?.[MODULE_ID]?.swing;
+  return Array.isArray(s) && s.length === 4 && s.every((v) => Number.isFinite(Number(v))) ? s.map(Number) : null;
+}
+
 export function rebuildWind() {
   calm();
   trees.clear();
   ropes.clear();
   if (!canvas.ready || !canvas.tiles) return;
   for (const tile of canvas.tiles.placeables) {
+    const ends = swung(tile.document);
+    if (ends) {
+      ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, ends });
+      continue;
+    }
     if (!windy(tile.document)) continue;
     const { width, height } = tile.document;
     if (roped(tile.document)) {
@@ -99,9 +113,22 @@ function untie(r) {
   r.filter = null;
 }
 
-/** Концы верёвки на экране: вдоль длинной стороны тайла, через середину. */
-function ropeEnds(tile) {
+/** Концы верёвки на экране: вдоль длинной стороны тайла, через середину. У гамака — его крюки. */
+function ropeEnds(tile, ends) {
   const s = tile.document.shape ?? tile.document;
+  if (ends) {
+    const d = tile.document;
+    const rad = ((s.rotation ?? d.rotation) * Math.PI) / 180;
+    const [c, sn] = [Math.cos(rad), Math.sin(rad)];
+    const at = (fx, fy) => {
+      const x = fx * d.width, y = fy * d.height;
+      return { x: s.x + x * c - y * sn, y: s.y + x * sn + y * c };
+    };
+    const A = at(ends[0], ends[1]), B = at(ends[2], ends[3]);
+    const len = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+    const m = tile.mesh.parent.worldTransform;
+    return { a: m.apply(A), b: m.apply(B), along: [(B.x - A.x) / len, (B.y - A.y) / len] };
+  }
   const { width, height } = tile.document;
   const rad = ((s.rotation ?? tile.document.rotation) * Math.PI) / 180;
   const half = Math.max(width, height) / 2;
@@ -112,15 +139,38 @@ function ropeEnds(tile) {
   return { a, b, along };
 }
 
+function tie(r) {
+  const mesh = r.tile.mesh;
+  if (r.filter) return;
+  r.filter = new PIXI.Filter(undefined, ROPE_FRAG, { uA: new Float32Array(2), uB: new Float32Array(2), uAmp: 0, uTime: 0, uPhase: r.phase, uBias: 0, uWave: 1 });
+  r.filter.resolution = canvas.app.renderer.resolution;
+  mesh.filters = [...(mesh.filters ?? []), r.filter];
+}
+
+/** Гамак: качка судна — медленный общий размах, сверху лёгкая дрожь полотна. */
+function swingRope(r, t, strength, grid) {
+  const mesh = r.tile.mesh;
+  if (!mesh || mesh.destroyed) return;
+  if (!strength) return untie(r);
+  tie(r);
+  const { a, b } = ropeEnds(r.tile, r.ends);
+  const zoom = mesh.parent.worldTransform.a;
+  const amp = grid * 0.11 * strength * zoom;
+  const u = r.filter.uniforms;
+  u.uA[0] = a.x; u.uA[1] = a.y; u.uB[0] = b.x; u.uB[1] = b.y;
+  u.uAmp = amp;
+  u.uTime = t;
+  // Период качки ~7 с; задержка у гамаков — доли секунды, поэтому ходят почти строем.
+  u.uBias = 0.9 * Math.sin(t * (Math.PI * 2) / 7 + r.phase * 0.12) + 0.15 * Math.sin(t * 1.9 + r.phase);
+  u.uWave = 0.18;
+  r.filter.padding = Math.ceil(amp * 1.4) + 2;
+}
+
 function swayRope(r, t, force, dx, dy, gust, grid) {
   const mesh = r.tile.mesh;
   if (!mesh || mesh.destroyed) return;
   if (!force) return untie(r);
-  if (!r.filter) {
-    r.filter = new PIXI.Filter(undefined, ROPE_FRAG, { uA: new Float32Array(2), uB: new Float32Array(2), uAmp: 0, uTime: 0, uPhase: r.phase, uBias: 0 });
-    r.filter.resolution = canvas.app.renderer.resolution;
-    mesh.filters = [...(mesh.filters ?? []), r.filter];
-  }
+  tie(r);
   const { a, b, along } = ropeEnds(r.tile);
   const zoom = mesh.parent.worldTransform.a;
   // Ветер поперёк верёвки выгибает её в свою сторону; вдоль — лишь колышет.
@@ -154,7 +204,11 @@ function sway() {
   const grid = canvas.grid.size;
   // Порывы: общий для всего леса медленный «вдох», чтобы ветер шёл волной.
   const gust = 0.65 + 0.35 * Math.sin(t * 0.21) * Math.sin(t * 0.13 + 1.3);
-  for (const r of ropes.values()) swayRope(r, t, force, dx, dy, gust, grid);
+  const strength = game.settings.get(MODULE_ID, "enabled") ? game.settings.get(MODULE_ID, "strength") : 0;
+  for (const r of ropes.values()) {
+    if (r.ends) swingRope(r, t, strength, grid);
+    else swayRope(r, t, force, dx, dy, gust, grid);
+  }
   for (const { tile, phase, size, amp } of trees.values()) {
     const mesh = tile.mesh;
     if (!mesh || mesh.destroyed) continue;

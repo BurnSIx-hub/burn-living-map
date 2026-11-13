@@ -40,7 +40,10 @@ uniform vec2 uCenter;
 uniform vec2 uFishSeed;
 uniform float uFishKind;
 
-float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// Вход хеша — по модулю 289: у бегущей по течению воды координаты за сессию
+// уходят в десятки тысяч клеток, и без этого хеш терял точность — блики и
+// барашки выстраивались в пунктирные столбики. Меньше 289 клеток — как было.
+float hash(vec2 p) { p = mod(p, 289.0); p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   vec2 u = f * f * (3.0 - 2.0 * f);
@@ -256,15 +259,25 @@ void main() {
   // Волны темнее и светлее — вода дышит. На ходу гребни вытягиваются поперёк
   // течения и бегут мимо борта.
   vec2 sp = cur > 0.01 ? vec2(dot(p, fd) * 1.1, dot(p, vec2(-fd.y, fd.x)) * 0.5) : p * 1.1;
-  float swell = (fbm(sp + warp * (cur > 0.01 ? 0.7 : 1.5) + vec2(t * 0.05, 0.0)) - 0.5) * uRipple * (1.0 + min(cur, 2.0) * 0.25);
+  float s1 = fbm(sp + warp * (cur > 0.01 ? 0.7 : 1.5) + vec2(t * 0.05, 0.0));
+  float swell = (s1 - 0.5) * uRipple;
+  if (cur > 0.01) {
+    // Вторая система волн — ветровая рябь наискось, со своей скоростью: вместе
+    // с зыбью узор не повторяется и всё время меняется, а не просто плывёт.
+    vec2 q2 = mat2(0.8, 0.6, -0.6, 0.8) * (p0 - fd * t * cur * 0.7) * 1.7 + vec2(t * 0.23, -t * 0.17);
+    float s2 = fbm(q2 + warp * 0.5);
+    swell = (mix(s1, s2, 0.45) - 0.5) * uRipple * (1.0 + min(cur, 2.0) * 0.35);
+  }
   // На ходу ложбины мягкие, без резкого края: открытое море, а не кляксы.
   float trough = cur > 0.01 ? smoothstep(0.0, 0.45, -swell) * 0.2 : max(0.0, -swell) * 0.3;
   vec4 o = vec4(0.0, 0.0, 0.0, (0.1 + trough) * deep);
   o.rgb += vec3(0.6, 0.85, 1.0) * (cur > 0.01 ? smoothstep(0.0, 0.4, swell) * 0.03 : max(0.0, swell) * 0.05) * deep;
   // Барашки: редкие белые гребни, плывут с водой.
   if (cur > 0.01) {
-    float cap = smoothstep(0.66, 0.8, fbm(sp * 0.9 + 11.0 + vec2(0.0, t * 0.06))) * smoothstep(0.45, 0.85, noise(p * 3.3 + vec2(t * 0.4, 0.0)));
-    o = over(o, vec3(0.92, 0.96, 1.0), clamp(cap * 0.32 * min(cur, 2.0), 0.0, 0.6) * deep);
+    // Барашек вспыхивает и гаснет: поле «жизни» идёт своим ходом, не с водой.
+    float life = smoothstep(0.35, 0.75, noise(p0 * 0.6 + vec2(t * 0.31, -t * 0.27)));
+    float cap = smoothstep(0.62, 0.78, fbm(sp * 0.9 + 11.0 + vec2(0.0, t * 0.06))) * smoothstep(0.45, 0.85, noise(p * 3.3 + vec2(t * 0.4, 0.0))) * life;
+    o = over(o, vec3(0.92, 0.96, 1.0), clamp(cap * 0.4 * min(cur, 2.0), 0.0, 0.6) * deep);
   }
   // Рыбки под водой: тень на дне, тело размыто рябью. На ходу их не видно.
   if (uFish > 0.01 && cur < 0.6) {
