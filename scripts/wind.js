@@ -9,6 +9,8 @@
 // Число в пометке — сила: 1 — крона, меньше — куст (лишь чуть колышется).
 // Пометка `rope` — верёвка с бельём: концы привязаны к стенам и стоят, а
 // середина провисает и колышется. Меш тогда не двигается: картинку гнёт фильтр.
+// Пометка `sock` — ветроуказатель: шест слева на картинке, конус вправо.
+// У шеста полотно стоит, к хвосту гнётся всё сильнее, по нему бежит рябь.
 // Пометка `swing` — гамак: [x0, y0, x1, y1] — концы (крюки) в долях картинки
 // от её середины. Гнёт тот же фильтр, но качает не ветер, а качка судна: все
 // гамаки ходят в такт, каждый чуть со своей задержкой; ветра под палубой нет.
@@ -44,6 +46,32 @@ void main() {
   float inside = step(inputClamp.x, tc.x) * step(tc.x, inputClamp.z) * step(inputClamp.y, tc.y) * step(tc.y, inputClamp.w);
   gl_FragColor = texture2D(uSampler, tc) * inside;
 }`;
+// Ветроуказатель: та же выборка поперёк оси «шест — хвост», но сдвиг растёт
+// от шеста к хвосту (у шеста ноль), а по полотну бежит мелкая волна.
+const SOCK_FRAG = `
+varying vec2 vTextureCoord;
+uniform sampler2D uSampler;
+uniform vec4 inputSize;
+uniform vec4 outputFrame;
+uniform vec4 inputClamp;
+uniform vec2 uA, uB;
+uniform float uAmp, uTime, uPhase, uBias;
+void main() {
+  vec2 pos = vTextureCoord * inputSize.xy + outputFrame.xy;
+  vec2 ab = uB - uA;
+  float len2 = max(dot(ab, ab), 1.0);
+  float u = clamp(dot(pos - uA, ab) / len2, 0.0, 1.0);
+  vec2 n = vec2(-ab.y, ab.x) / sqrt(len2);
+  float swing = uBias + 0.55 * sin(uTime * 1.3 + uPhase) + 0.25 * sin(uTime * 2.3 + uPhase * 1.7);
+  float flutter = 0.22 * sin(uTime * 7.5 - u * 11.0 + uPhase);
+  float d = uAmp * (pow(u, 1.6) * swing + u * flutter);
+  vec2 src = pos - n * d;
+  vec2 tc = (src - outputFrame.xy) * inputSize.zw;
+  float inside = step(inputClamp.x, tc.x) * step(tc.x, inputClamp.z) * step(inputClamp.y, tc.y) * step(tc.y, inputClamp.w);
+  gl_FragColor = texture2D(uSampler, tc) * inside;
+}`;
+/** Шест и хвост ветроуказателя в долях картинки от её середины. */
+const SOCK_ENDS = [-0.44, 0, 0.48, 0];
 let ticking = false;
 
 /** Насколько сильно и куда дует: настройки мира, плюс общая сила эффектов игрока. */
@@ -65,6 +93,10 @@ function windy(doc) {
   return Number(doc.flags?.[MODULE_ID]?.wind ?? 0) > 0;
 }
 
+function socked(doc) {
+  return !!doc.flags?.[MODULE_ID]?.sock;
+}
+
 function roped(doc) {
   return !!doc.flags?.[MODULE_ID]?.rope;
 }
@@ -81,6 +113,10 @@ export function rebuildWind() {
   ropes.clear();
   if (!canvas.ready || !canvas.tiles) return;
   for (const tile of canvas.tiles.placeables) {
+    if (socked(tile.document)) {
+      ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, sock: true });
+      continue;
+    }
     const ends = swung(tile.document);
     if (ends) {
       ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, ends });
@@ -142,6 +178,12 @@ function ropeEnds(tile, ends) {
 function tie(r) {
   const mesh = r.tile.mesh;
   if (r.filter) return;
+  if (r.sock) {
+    r.filter = new PIXI.Filter(undefined, SOCK_FRAG, { uA: new Float32Array(2), uB: new Float32Array(2), uAmp: 0, uTime: 0, uPhase: r.phase, uBias: 0 });
+    r.filter.resolution = canvas.app.renderer.resolution;
+    mesh.filters = [...(mesh.filters ?? []), r.filter];
+    return;
+  }
   r.filter = new PIXI.Filter(undefined, ROPE_FRAG, { uA: new Float32Array(2), uB: new Float32Array(2), uAmp: 0, uTime: 0, uPhase: r.phase, uBias: 0, uWave: 1 });
   r.filter.resolution = canvas.app.renderer.resolution;
   mesh.filters = [...(mesh.filters ?? []), r.filter];
@@ -164,6 +206,24 @@ function swingRope(r, t, strength, grid) {
   u.uBias = 0.9 * Math.sin(t * (Math.PI * 2) / 7 + r.phase * 0.12) + 0.15 * Math.sin(t * 1.9 + r.phase);
   u.uWave = 0.18;
   r.filter.padding = Math.ceil(amp * 1.4) + 2;
+}
+
+/** Ветроуказатель: ветер поперёк конуса отклоняет его, порывы раскачивают. */
+function swaySock(r, t, force, dx, dy, gust, grid) {
+  const mesh = r.tile.mesh;
+  if (!mesh || mesh.destroyed) return;
+  if (!force) return untie(r);
+  tie(r);
+  const { a, b, along } = ropeEnds(r.tile, SOCK_ENDS);
+  const zoom = mesh.parent.worldTransform.a;
+  const across = dx * -along[1] + dy * along[0];
+  const amp = grid * 0.16 * Math.min(force, 1.6) * zoom * (0.7 + 0.3 * gust);
+  const u = r.filter.uniforms;
+  u.uA[0] = a.x; u.uA[1] = a.y; u.uB[0] = b.x; u.uB[1] = b.y;
+  u.uAmp = amp;
+  u.uTime = t;
+  u.uBias = across * 0.6;
+  r.filter.padding = Math.ceil(amp * 1.8) + 2;
 }
 
 function swayRope(r, t, force, dx, dy, gust, grid) {
@@ -206,7 +266,8 @@ function sway() {
   const gust = 0.65 + 0.35 * Math.sin(t * 0.21) * Math.sin(t * 0.13 + 1.3);
   const strength = game.settings.get(MODULE_ID, "enabled") ? game.settings.get(MODULE_ID, "strength") : 0;
   for (const r of ropes.values()) {
-    if (r.ends) swingRope(r, t, strength, grid);
+    if (r.sock) swaySock(r, t, force, dx, dy, gust, grid);
+    else if (r.ends) swingRope(r, t, strength, grid);
     else swayRope(r, t, force, dx, dy, gust, grid);
   }
   for (const { tile, phase, size, amp } of trees.values()) {

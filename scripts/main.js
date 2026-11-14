@@ -12,6 +12,7 @@ import { registerMachines, rebuildMachines } from "./machines.js";
 import { registerHover, rebuildHover } from "./hover.js";
 import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
+import { registerChimneys, rebuildChimneys } from "./chimneys.js";
 import { RIFT, riftUniforms, openness, riftApi } from "./rift.js";
 
 // 🔥 Wild Canvas. Область сцены с пометкой `flags.burn-living-map.effect`
@@ -52,7 +53,7 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "enabled", {
     name: "BLM.Setting.Enabled", hint: "BLM.Setting.EnabledHint",
     scope: "client", config: true, type: Boolean, default: true,
-    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); }
+    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); rebuildChimneys(); }
   });
   game.settings.register(MODULE_ID, "strength", {
     name: "BLM.Setting.Strength", hint: "BLM.Setting.StrengthHint",
@@ -93,13 +94,15 @@ Hooks.once("init", () => {
   registerSpeakers();
   // Сливы крыш под дождём: вода по лотку, струя в воронку (см. scupper.js).
   registerScuppers();
+  // Дым из труб на крышах: клубы по ветру, гаснут вместе с крышей (см. chimneys.js).
+  registerChimneys();
   for (const hook of ["createTile", "updateTile", "deleteTile"]) {
     Hooks.on(hook, (doc) => { if (doc.parent === canvas.scene && (heatOf(doc) > 0 || hook !== "createTile")) setTimeout(() => rebuildAmbience(), 0); });
   }
 });
 
 Hooks.once("ready", () => {
-  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildHover, rebuildScuppers, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS, rift: riftApi };
+  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildHover, rebuildScuppers, rebuildChimneys, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS, rift: riftApi };
   Hooks.callAll("hubRegisterTile", {
     moduleId: MODULE_ID,
     title: loc("Title"),
