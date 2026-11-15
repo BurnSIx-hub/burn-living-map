@@ -25,6 +25,8 @@
 //
 // Крыша — тайл с затуханием (`occlusion.modes`) и навесом от света или погоды
 // (`restrictions`), как выгружает Картограф; крона дерева (`wind`) — не крыша.
+// С Картографа 0.2.33 крыша гаснет не над фишкой, а внутри открытой поверхности
+// Foundry 14 (режим SURFACE) — см. `opened`.
 
 const MODULE_ID = "burn-living-map";
 /** Край крыши — точки на столько клеток наружу от стены. */
@@ -118,9 +120,66 @@ function shapeOf(tile) {
   const xs = all.map((p) => p.x), ys = all.map((p) => p.y);
   const pad = canvas.grid.size;
   const box = new PIXI.Rectangle(Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) - Math.min(...xs) + 2 * pad, Math.max(...ys) - Math.min(...ys) + 2 * pad);
-  const shape = { sig, rings, rim: rimOf(rings), box };
+  // Точки под крышей — сеткой по рамке: по ним видно, открыта ли над ней поверхность.
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const inner = [];
+  for (let j = 0; j < 5; j++) {
+    for (let i = 0; i < 5; i++) {
+      const q = { x: x0 + ((i + 0.5) / 5) * (x1 - x0), y: y0 + ((j + 0.5) / 5) * (y1 - y0) };
+      if (inRings(rings, q)) inner.push(q);
+    }
+  }
+  const shape = { sig, rings, rim: rimOf(rings), box, inner };
   shapes.set(tile, shape);
   return shape;
+}
+
+/** Сколько точек крыши лежит под поверхностью Foundry 14 (область с поведением
+ * «поверхность»). Поверхность прячет тайлы с режимом SURFACE на своей высоте и выше. */
+function under(tile, s) {
+  const sh = shapeOf(tile);
+  if (s.elevation > tile.document.elevation || !s.region.bounds.intersects(sh.box)) return 0;
+  const tree = s.region.polygonTree;
+  let hit = 0;
+  for (const q of sh.inner) if (tree.testPoint(q)) hit++;
+  return hit;
+}
+
+/** Крыша открыта: растаяла над фишкой (`occluded`) или спрятана открытой
+ * поверхностью — фишка под ней, а у Мастера ещё мышь над ней или зажат Alt.
+ * Открытую крышу в поле зрения не дорисовываем: на её месте комната, а не черепица. */
+function opened(tile) {
+  if (tile.occluded) return true;
+  const surface = CONST.OCCLUSION_MODES?.SURFACE ?? 2;
+  if (!(tile.mesh.occlusionMode & surface)) return false;
+  const open = canvas.masks?.occlusion?.occludedSurfaces;
+  if (!open?.size) return false;
+  const need = shapeOf(tile).inner.length;
+  if (!need) return false;
+  let hit = 0;
+  for (const s of open) {
+    hit += under(tile, s);
+    // Больше половины крыши под открытыми поверхностями: соседская задела бы лишь край.
+    if (hit * 2 > need) return true;
+  }
+  return false;
+}
+
+/** С полем зрения фишки крыша открывается только над фишкой. По Alt и под мышью
+ * (так открывает поверхности ядро) игрок увидел бы комнату: крышу, видную с
+ * улицы, модуль дорисовывает в поле зрения, и туман войны помнит место под ней
+ * как разведанное. Мастер без поля зрения открывает крыши как в ядре. */
+function keepTokenOpened(open) {
+  if (!open.size || !canvas.effects.visionSources.some((s) => s.active)) return;
+  const tiles = roofs();
+  if (!tiles.length) return;
+  const tokens = canvas.tokens._getOccludableTokens?.() ?? [];
+  for (const s of [...open]) {
+    if (!tiles.some((t) => under(t, s) * 2 > shapeOf(t).inner.length)) continue;
+    const tree = s.region.polygonTree;
+    const below = tokens.some((t) => t.document.elevation < s.elevation && t.bounds.intersects(s.region.bounds) && t.document.getOcclusionTestPoints().some((p) => tree.testPoint(p)));
+    if (!below) open.delete(s);
+  }
 }
 
 /** Точка сцены под крышей (по контуру, дворы — снаружи). */
@@ -150,7 +209,7 @@ function drawSeenRoofs(group) {
   if (!sources.length) return;
   const reach = sources.map((s) => s.los?.bounds ?? s.los?.getBounds?.()).filter(Boolean);
   for (const tile of roofs()) {
-    if (tile.occluded) continue;
+    if (opened(tile)) continue;
     const sh = shapeOf(tile);
     // Крыша далеко за линией взгляда всех токенов — край не проверяем.
     if (reach.length && !reach.some((b) => b.intersects(sh.box))) continue;
@@ -160,7 +219,7 @@ function drawSeenRoofs(group) {
 
 /** Обе стороны двери (на полклетки от неё) под непрозрачной крышей. */
 function underRoof(wall) {
-  const list = roofs().filter((t) => !t.occluded);
+  const list = roofs().filter((t) => !opened(t));
   if (!list.length) return false;
   const [x, y] = wall.midpoint;
   const ray = wall.toRay();
@@ -173,11 +232,37 @@ function underRoof(wall) {
 
 // Растворилась крыша или вернулась — маску и значки надо пересчитать.
 let lastState = "";
+function roofState() {
+  return roofs().map((t) => (opened(t) ? "1" : "0")).join("");
+}
 function watchOcclusion() {
-  const state = roofs().map((t) => (t.occluded ? "1" : "0")).join("");
+  const state = roofState();
   if (state === lastState) return;
   lastState = state;
   canvas.perception.update({ refreshVision: true });
+}
+
+/** Поверхности открылись или закрылись (Alt, мышь, фишка) — поле зрения
+ * пересчитать в том же проходе: до следующей проверки по таймеру открытая крыша
+ * оставалась бы дорисованной в нём, и игрок на миг видел бы дом насквозь. */
+function watchSurfaces() {
+  const mask = foundry.canvas.layers?.CanvasOcclusionMask?.prototype;
+  const base = mask?._updateOccludedSurfaces;
+  if (!base) return;
+  mask._updateOccludedSurfaces = function (flags, ...rest) {
+    const out = base.call(this, flags, ...rest);
+    try {
+      keepTokenOpened(this.occludedSurfaces);
+      const state = roofState();
+      if (state !== lastState) {
+        lastState = state;
+        if (flags) flags.refreshVision = true;
+      }
+    } catch {
+      // Проверка по таймеру остаётся.
+    }
+    return out;
+  };
 }
 
 /** Створка двери — на землю (высота 0, поверх пола, под токенами). */
@@ -205,6 +290,7 @@ export function registerRoofs() {
 
   Hooks.on("visibilityRefresh", drawSeenRoofs);
   Hooks.on("canvasReady", () => { lastState = ""; });
+  watchSurfaces();
 
   const DoorControl = foundry.canvas.containers.DoorControl;
   const base = Object.getOwnPropertyDescriptor(DoorControl.prototype, "isVisible");
