@@ -310,7 +310,7 @@ function makeZone(region, effect, cuts) {
 function drawMask(tri, b, grid) {
   const s = MASK_SCALE;
   const { rt, w, h } = target(b, s);
-  const g = silhouette([tri], b, s);
+  const g = silhouette([tri, ...beyondEdges(tri)], b, s);
   const blur = new PIXI.BlurFilter(grid * 0.35 * s, 4);
   blur.padding = Math.ceil(grid * s);
   g.filters = [blur];
@@ -318,6 +318,39 @@ function drawMask(tri, b, grid) {
   canvas.app.renderer.render(g, { renderTexture: rt, clear: true });
   g.destroy();
   return rt;
+}
+
+/**
+ * Область, что упирается в край сцены (озеро, река за край карты), продолжается за
+ * него своим зеркалом: иначе размытая маска у края гаснет, и по рамке карты бежит
+ * пена, как у берега. Зеркала — только через края, которых область касается.
+ */
+function beyondEdges(tri) {
+  const r = canvas.dimensions.sceneRect;
+  const v = tri.vertices;
+  const eps = 1;
+  let left = false, right = false, top = false, bottom = false;
+  for (let i = 0; i < v.length; i += 2) {
+    left ||= v[i] <= r.left + eps;
+    right ||= v[i] >= r.right - eps;
+    top ||= v[i + 1] <= r.top + eps;
+    bottom ||= v[i + 1] >= r.bottom - eps;
+  }
+  const flips = [];
+  const fx = [null, ...(left ? [r.left] : []), ...(right ? [r.right] : [])];
+  const fy = [null, ...(top ? [r.top] : []), ...(bottom ? [r.bottom] : [])];
+  for (const x of fx) {
+    for (const y of fy) {
+      if (x === null && y === null) continue;
+      const m = new Float32Array(v.length);
+      for (let i = 0; i < v.length; i += 2) {
+        m[i] = x === null ? v[i] : 2 * x - v[i];
+        m[i + 1] = y === null ? v[i + 1] : 2 * y - v[i + 1];
+      }
+      flips.push({ vertices: m, indices: tri.indices });
+    }
+  }
+  return flips;
 }
 
 /** Вырезы в рамке области; без них — пустая маска. */
