@@ -9,8 +9,10 @@
 //    к `reach` клеткам от края стихает до нуля. Слушатели — как у звуков
 //    окружения Foundry (`getListenerPositions`): токены со зрением, у Мастера —
 //    выбранные. Вариант записи — в окне области (флаг `sound`, "off" — тишина).
+// У области своя громкость — флаг `volume` (1 — как есть, 0 — тишина, до 2), ползунок
+// в окне области; Мастер слышит его сразу, ещё не сохранив (`preview`).
 // Всё идёт в контекст окружения (`game.audio.environment`) и слушается ползунка
-// «Окружение». Петли сшиваются перекрёстным затуханием: стык записи не щёлкает.
+// «Окружение»: громкость области умножается на него. Петли сшиваются перекрёстным затуханием: стык записи не щёлкает.
 // Записи — Freesound, авторы в README.
 //  • горящий тайл (blaze.js) звучит, как большой костёр, — по своей рамке.
 
@@ -142,6 +144,17 @@ const zones = new Map();     // "эффект:вариант" → { mix, regions
 const indoors = new Map();   // ключ звука → { mix, regions }
 /** За сколько клеток за краем области «внутри» сменяется звуком сцены. */
 const DOORSTEP = 0.5;
+/** Громкость, ещё не сохранённая в открытом окне области: id области → громкость. */
+const preview = new Map();
+
+/** Громкость области: открытое окно, флаг `volume`, иначе 1. У горящего тайла — 1. */
+function volumeOf(region) {
+  const v = Number(preview.get(region?.id) ?? region?.flags?.[MODULE_ID]?.volume ?? 1);
+  return Number.isFinite(v) ? Math.max(0, v) : 1;
+}
+
+/** Пересчитать громкость по нынешним слушателям. */
+const relisten = () => listen(canvas.ready ? canvas.sounds.getListenerPositions() : []);
 
 export function registerAmbience() {
   game.settings.register(MODULE_ID, "ambience", {
@@ -261,17 +274,20 @@ function listen(listeners) {
   // Слушать некому (у Мастера не выбран токен) — слышно то, что в середине экрана.
   if (!listeners?.length) listeners = [{ x: canvas.stage.pivot.x, y: canvas.stage.pivot.y }];
   // Внутри места: его звук, звук сцены — тем тише, чем глубже зашли все слушатели.
+  // Громкость места — своей области (у нескольких областей одного звука — самой громкой рядом).
   if (indoors.size) {
     const step = DOORSTEP * canvas.grid.size;
-    const depth = (regions, p) => Math.max(0, 1 - Math.min(...regions.map((r) => distance(r, p))) / step);
+    const depth = (r, p) => Math.max(0, 1 - distance(r, p) / step);
     const levels = new Map([...indoors.keys()].map((k) => [k, 0]));
     let outside = 0;
     for (const p of listeners) {
       let here = 0;
       for (const [k, z] of indoors) {
-        const d = depth(z.regions, p);
-        levels.set(k, Math.max(levels.get(k), d));
-        here = Math.max(here, d);
+        for (const r of z.regions) {
+          const d = depth(r, p);
+          levels.set(k, Math.max(levels.get(k), d * volumeOf(r)));
+          here = Math.max(here, d);
+        }
       }
       outside = Math.max(outside, 1 - here);
     }
@@ -279,15 +295,22 @@ function listen(listeners) {
     place?.mix.set(PLACE_LOUD * outside, 600);
   }
   if (!zones.size) return;
+  // Каждая область слышна своей громкостью; у нескольких областей одного звука — громче та, что ближе.
   for (const z of zones.values()) {
     const reach = z.reach * canvas.grid.size;
-    let near = Infinity;
-    for (const p of listeners ?? []) {
-      for (const r of z.regions) near = Math.min(near, distance(r, p));
-      if (near === 0) break;
+    let level = 0;
+    for (const r of z.regions) {
+      const vol = volumeOf(r);
+      if (vol <= 0) continue;
+      let near = Infinity;
+      for (const p of listeners ?? []) {
+        near = Math.min(near, distance(r, p));
+        if (near === 0) break;
+      }
+      const k = Math.max(0, 1 - near / reach);
+      level = Math.max(level, ZONE_LOUD * k * k * (3 - 2 * k) * vol);
     }
-    const k = Math.max(0, 1 - near / reach);
-    z.mix.set(ZONE_LOUD * k * k * (3 - 2 * k));
+    z.mix.set(level);
   }
 }
 
@@ -386,7 +409,41 @@ export function soundField(app, set) {
   };
   effectSelect?.addEventListener("change", draw);
   draw();
+
+  // Громкость: у звука области и у звука внутри. Двигаешь — слышно сразу.
+  const vol = document.createElement("div");
+  vol.className = "form-group";
+  vol.innerHTML = `
+    <label>${loc("Volume.Label")}</label>
+    <div class="form-fields">
+      <range-picker name="flags.${MODULE_ID}.volume" value="${volumeOf(app.document)}" min="0" max="2" step="0.05"></range-picker>
+    </div>
+    <p class="hint">${loc("Volume.Hint")}</p>`;
+  div.after(vol);
+  const placeSelect = here.querySelector("select");
+  const showVol = () => {
+    const sound = div.querySelector("select")?.value;
+    const zone = ZONES[effectSelect?.value] && sound !== "off";
+    vol.style.display = zone || placeSelect.value ? "" : "none";
+  };
+  set.addEventListener("change", showVol);
+  showVol();
+  const id = app.document.id;
+  const hear = (event) => {
+    if (event.target.closest?.("range-picker")?.getAttribute("name") !== `flags.${MODULE_ID}.volume`) return;
+    const v = Number(event.target.value);
+    if (!Number.isFinite(v)) return;
+    preview.set(id, v);
+    relisten();
+  };
+  set.addEventListener("input", hear, true);
+  set.addEventListener("change", hear, true);
 }
+
+// Окно области закрыто: несохранённая громкость забыта.
+Hooks.on("closeRegionConfig", (app) => {
+  if (preview.delete(app.document?.id)) relisten();
+});
 
 // Панель звуков у Мастера: разовые звуки для всех.
 Hooks.on("getSceneControlButtons", (controls) => {

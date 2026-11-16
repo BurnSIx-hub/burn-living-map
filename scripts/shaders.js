@@ -996,7 +996,7 @@ export const EFFECTS = Object.keys(FRAG);
  */
 export const SPEED = { key: "speed", min: 0.2, max: 3 };
 export const PARAMS = {
-  water: [{ key: "ripple", max: 2 }, { key: "foam", max: 2 }, { key: "caustic", max: 2 }, { key: "glint", max: 2 }, { key: "fish", max: 1 }, { key: "fishKind", initial: 0, fixed: true, choices: ["river", "sea", "koi"] }, { key: "current", max: 3, step: 0.1, initial: 0, fixed: true }, { key: "drift", max: 360, step: 5, initial: 90, fixed: true }],
+  water: [{ key: "ripple", max: 2 }, { key: "foam", max: 2 }, { key: "caustic", max: 2 }, { key: "glint", max: 2 }, { key: "fish", max: 1 }, { key: "fishKind", initial: 0, fixed: true, choices: ["river", "sea", "koi", "none"] }, { key: "current", max: 3, step: 0.1, initial: 0, fixed: true }, { key: "drift", max: 360, step: 5, initial: 90, fixed: true }],
   waterfall: [{ key: "streaks", max: 2 }, { key: "spray", max: 2 }, { key: "flow", max: 360, step: 5, initial: 90, fixed: true }],
   fountain: [{ key: "jet", max: 2 }, { key: "spill", max: 2 }, { key: "ripple", max: 2 }, { key: "glint", max: 2 }],
   lava: [{ key: "glow", max: 2 }, { key: "sparks", max: 2 }],

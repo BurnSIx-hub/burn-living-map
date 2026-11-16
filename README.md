@@ -5,7 +5,7 @@
 A Foundry VTT 14 module that brings scene regions to life. A shader draws over
 the map image on every player's screen:
 
-- **water** — ripples, glints on the bottom, foam along the shore, and now and then a fish swims by: river fish (trout, perch, carp, pike), sea fish (mackerel, sea bream, cod, herring shoals) or ornamental koi. Pick them with "Fish kind" in the region window or in the settings. Where they swim depends on the scene seed (the `seed` flag written by Cartographer; without it, the scene id), so every map has its own fish and all players see the same ones;
+- **water** — ripples, glints on the bottom, foam along the shore, and now and then a fish swims by: river fish (trout, perch, carp, pike), sea fish (mackerel, sea bream, cod, herring shoals), ornamental koi or no fish at all. Pick them with "Fish kind" in the region window or in the settings. Where they swim depends on the scene seed (the `seed` flag written by Cartographer; without it, the scene id), so every map has its own fish and all players see the same ones;
 - **lava** — breathing glowing veins, sparks, heat along the shore;
 - **swamp** — creeping murk and bubbles;
 - **fog** — slowly drifting wisps;
@@ -131,8 +131,12 @@ Moved here from the "Location Misc" module (formerly footstep-sounds). The behav
 
 ## Settings
 
-Client settings: on or off (for a weak computer), effect strength, place sounds.
-With BurnHub, the "Wild Canvas" tile turns it on and off.
+All module settings live in their own window, not in the game settings. With BurnHub, the "Wild Canvas" tile opens it; without BurnHub, a "Wild Canvas settings" button in the game settings does.
+
+- **On this computer** — on or off (for a weak computer), effect strength, place sounds, weather on the ground, footsteps.
+- **For everyone at the table** — the look of every effect, wind in the crowns, falling leaves, splashes. Only a user who may change world settings sees this part.
+
+Sliders take effect at once; closing the window without saving brings everything back.
 
 ## Cloud shadows
 
@@ -144,11 +148,11 @@ Scene window, "Ambience" tab: strength (0 is off) and density. Soft cloud shadow
 
 **Sound inside** — any region can have a "Sound inside" (tavern, house…): while a token is in it, that sound plays and the scene sound fades; at the threshold they cross over within half a square. Cartographer outlines the rooms of houses and taverns this way and sets the seasonal forest as the scene sound.
 
-**Area sound** — lava, water and swamp are heard over the region and within two squares of its edge, a campfire within five; closer is louder. Tokens listen, as with Foundry ambient sounds (for the GM, the selected ones). The recording is chosen in the region window, along with "Silent".
+**Area sound** — lava, water and swamp are heard over the region and within two squares of its edge, a campfire within five; closer is louder. Tokens listen, as with Foundry ambient sounds (for the GM, the selected ones). The recording is chosen in the region window, along with "Silent". "Volume" next to it (0–2, 1 is as recorded) sets how loud this region is — the sound inside it too; it is heard at once while the slider moves, before saving.
 
 **Bells** — a button in the GM's sound panel: they ring for everyone.
 
-Volume is the "Environment" slider; turn it off for yourself with the "Place sounds" setting. Loops are stitched with a 3 s crossfade. Recordings are Freesound HQ previews (mp3), long ones trimmed to 2.5–3 minutes; loudness is levelled with multipliers in `scripts/ambience.js`.
+The overall volume is the "Environment" slider (a region's own volume is multiplied by it); turn it off for yourself with the "Place sounds" setting. Loops are stitched with a 3 s crossfade. Recordings are Freesound HQ previews (mp3), long ones trimmed to 2.5–3 minutes; loudness is levelled with multipliers in `scripts/ambience.js`.
 
 ### Recording credits
 

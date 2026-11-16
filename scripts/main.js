@@ -15,6 +15,7 @@ import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
 import { registerChimneys, rebuildChimneys } from "./chimneys.js";
 import { RIFT, riftUniforms, openness, riftApi } from "./rift.js";
+import { takeSettings, openPanel, WildCanvasPanel } from "./panel.js";
 
 // 🔥 Wild Canvas. Область сцены с пометкой `flags.burn-living-map.effect`
 // оживает: поверх картинки ложится меш с шейдером эффекта. Меш живёт в
@@ -101,6 +102,15 @@ Hooks.once("init", () => {
   for (const hook of ["createTile", "updateTile", "deleteTile"]) {
     Hooks.on(hook, (doc) => { if (doc.parent === canvas.scene && (heatOf(doc) > 0 || hook !== "createTile")) setTimeout(() => rebuildAmbience(), 0); });
   }
+  // Все настройки — в своём окне (см. panel.js). Его открывает плитка BurnHub,
+  // а без BurnHub — кнопка в настройках игры.
+  takeSettings();
+  if (!game.modules.get("burnhub")?.active) {
+    game.settings.registerMenu(MODULE_ID, "panel", {
+      name: "BLM.Title", label: "BLM.Panel.Open", hint: "BLM.Panel.Hint",
+      icon: "fa-solid fa-water", type: WildCanvasPanel, restricted: false
+    });
+  }
 });
 
 Hooks.once("ready", () => {
@@ -109,11 +119,7 @@ Hooks.once("ready", () => {
     moduleId: MODULE_ID,
     title: loc("Title"),
     icon: "fa-solid fa-water",
-    onClick: async () => {
-      const on = !game.settings.get(MODULE_ID, "enabled");
-      await game.settings.set(MODULE_ID, "enabled", on);
-      ui.notifications.info(loc(on ? "On" : "Off"));
-    }
+    onClick: () => openPanel()
   });
 });
 
@@ -250,6 +256,8 @@ function fishSeed() {
 function looksOf(region) {
   const looks = Object.fromEntries(LOOKS.filter((l) => l !== SPEED).map(({ key }) => [uniformOf(key), look(region, key)]));
   looks.uStrength = preview.world.strength ?? game.settings.get(MODULE_ID, "strength");
+  // Вид рыбы «без рыбы» (последний в списке) гасит рыб, сколько бы их ни было.
+  if (looks.uFishKind === 3) looks.uFish = 0;
   return looks;
 }
 
@@ -479,6 +487,13 @@ Hooks.on("renderSettingsConfig", (app, element) => {
 });
 
 Hooks.on("closeSettingsConfig", () => {
+  for (const key of Object.keys(preview.world)) delete preview.world[key];
+  refreshLooks();
+});
+
+// Своё окно настроек (плитка BurnHub) — так же.
+Hooks.on("renderWildCanvasPanel", (app, element) => live(element, preview.world));
+Hooks.on("closeWildCanvasPanel", () => {
   for (const key of Object.keys(preview.world)) delete preview.world[key];
   refreshLooks();
 });
