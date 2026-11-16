@@ -148,7 +148,7 @@ function under(tile, s) {
 /** Крыша открыта: растаяла над фишкой (`occluded`) или спрятана открытой
  * поверхностью — фишка под ней, а у Мастера ещё мышь над ней или зажат Alt.
  * Открытую крышу в поле зрения не дорисовываем: на её месте комната, а не черепица. */
-function opened(tile) {
+export function opened(tile) {
   if (tile.occluded) return true;
   const surface = CONST.OCCLUSION_MODES?.SURFACE ?? 2;
   if (!(tile.mesh.occlusionMode & surface)) return false;

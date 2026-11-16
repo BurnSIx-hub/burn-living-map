@@ -5,10 +5,15 @@
 // уходя по ветру сцены (настройки «Ветер в кронах»), с ленивым покачиванием.
 //
 // Клубы рисуются в свою текстуру и выходят на сцену спрайтом Foundry
-// (PrimarySpriteMesh) на высоте крыши, с её затуханием: игрок вошёл в дом —
-// крыша гаснет, и дым над ней тоже. Так же устроены сливы (scupper.js).
+// (PrimarySpriteMesh) на высоте крыши. Дым поднимается над всеми крышами своей
+// высоты: ветер несёт шлейф над соседним домом, и соседняя крыша не должна его
+// закрывать. Поэтому затухание крыши (режим SURFACE ядра) дым не копирует —
+// оно поточечное и срезало шлейф ровно по краю соседней крыши. Дым гаснет
+// целиком, когда открыта его крыша (`opened` из roofs.js): игрок вошёл в дом —
+// крыша гаснет, и дым над ней тоже.
 
 import { wind } from "./wind.js";
+import { opened as roofOpened } from "./roofs.js";
 
 const MODULE_ID = "burn-living-map";
 /** Сторона текстуры дыма и сколько клеток она покрывает (труба — посередине). */
@@ -17,6 +22,8 @@ const CELLS = 9;
 const PUFFS = 11;
 /** Секунды жизни клуба. */
 const LIFE = 5.2;
+/** Порядок внутри высоты крыши: выше любой крыши (у тайлов sort — малые целые). */
+const ABOVE_ROOFS = 1e6;
 
 /** @type {Map<string, {tile: Tile, items: object[]}>} */
 const roofs = new Map();
@@ -82,18 +89,12 @@ function buildOne(tile, [x, y, size], n) {
   mesh.scale.set((CELLS * grid) / SIZE);
   mesh.eventMode = "none";
   mesh.hoverFade = false;
-  // Затухание — как у крыши: её состояние копируется после своего пересчёта.
-  const own = mesh.updateTransform;
-  mesh.updateTransform = function () {
-    own.call(this);
-    const tm = tile.mesh;
-    if (tm && !tm.destroyed) Object.assign(this._occlusionState, tm._occlusionState);
-  };
+  mesh.occlusionMode = CONST.OCCLUSION_MODES?.NONE ?? 0;
   canvas.primary.addChild(mesh);
   // Радиус клуба у устья в точках текстуры: у трубы в клетку — 0,45 клетки,
   // к концу жизни он втрое шире.
   const mouth = Math.max(0.5, Math.min(2, (Number(size) || grid) / grid)) * 0.45 * (SIZE / CELLS);
-  return { tile, root, puffs, rt, mesh, seed, mouth };
+  return { tile, root, puffs, rt, mesh, seed, mouth, fade: 1, last: 0 };
 }
 
 function drop(id) {
@@ -148,17 +149,18 @@ function draw(it, tm, t, force, dx, dy, strength) {
   if (mesh.destroyed) return;
   mesh.elevation = tm.elevation;
   mesh.sortLayer = tm.sortLayer;
-  if (mesh.sort !== (tm.sort ?? 0) + 0.6) {
-    mesh.sort = (tm.sort ?? 0) + 0.6;
+  const sort = ABOVE_ROOFS + (tm.sort ?? 0);
+  if (mesh.sort !== sort) {
+    mesh.sort = sort;
     canvas.primary.sortDirty = true;
   }
-  mesh._occludedBySameElevationSurfaces = tm._occludedBySameElevationSurfaces;
-  mesh.occlusionMode = tm.occlusionMode;
-  mesh.occluded = tm.occluded;
-  mesh.unoccludedAlpha = tm.unoccludedAlpha;
-  mesh.occludedAlpha = tm.occludedAlpha;
-  mesh.alpha = tm.alpha;
-  mesh.visible = tm.visible && tm.renderable !== false && it.tile?.visible !== false;
+  // Крыша открыта — дым тает до её прозрачности, закрылась — возвращается (~0,3 с).
+  const target = roofOpened(it.tile) ? tm.occludedAlpha : tm.unoccludedAlpha;
+  const dt = it.last ? Math.min(0.1, t - it.last) : 1;
+  it.last = t;
+  it.fade += (target - it.fade) * Math.min(1, dt * 7);
+  mesh.alpha = tm.alpha * it.fade;
+  mesh.visible = tm.visible && tm.renderable !== false && it.tile?.visible !== false && mesh.alpha > 0.005;
   if (!mesh.visible) return;
 
   // Тихо — дым встаёт столбом и расплывается на месте; ветер — уносит шлейфом.
