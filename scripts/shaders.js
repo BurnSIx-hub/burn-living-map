@@ -212,6 +212,10 @@ vec2 wakeAt(vec2 p, vec2 fd) {
     // Бурун уже корпуса (вода сходится за кормой) и вдали чуть шире.
     float nar = max(0.6, 2.4 - s * 0.1);
     core = max(core, min(blocks(q + sd * nar), blocks(q - sd * nar)) * fall * fall);
+    // За узким препятствием (камень в реке) — струя во всю его ширину: корпус
+    // шире 4 клеток сюда не попадает, у него бурун уже корпуса.
+    float narrow = 1.0 - max(blocks(q + sd * 1.9), blocks(q - sd * 1.9));
+    core = max(core, blocks(q) * narrow * fall * fall * 0.85);
     wide = max(wide, max(blocks(q + sd * s * 0.36), blocks(q - sd * s * 0.36)) * fall);
     inner = max(inner, max(blocks(q + sd * s * 0.31), blocks(q - sd * s * 0.31)) * fall);
   }
@@ -307,7 +311,11 @@ void main() {
     // Нос режет воду: где течение бьёт в берег, пена шире и гуще.
     vec2 e = vec2(0.3, 0.0);
     vec2 g = vec2(maskAt(p0 + e.xy) - maskAt(p0 - e.xy), maskAt(p0 + e.yx) - maskAt(p0 - e.yx));
-    float bow = max(0.0, -dot(g / (length(g) + 1e-4), fd)) * smoothstep(0.0, 0.05, length(g));
+    vec2 gn = g / (length(g) + 1e-4);
+    // Бурун и полоса у борта — только у препятствия внутри области (корпус, остров,
+    // камень в реке), как и след: у внешнего берега канала пены нет.
+    float inner = blocks(p0 - gn * 0.5);
+    float bow = max(0.0, -dot(gn, fd)) * smoothstep(0.0, 0.05, length(g)) * inner;
     // Пена, вытянутая вдоль хода и бегущая с водой.
     vec2 sd = vec2(-fd.y, fd.x);
     vec2 fl = vec2(dot(p, fd) * 0.8, dot(p, sd) * 2.4);
@@ -319,7 +327,7 @@ void main() {
     float hullBand = smoothstep(0.32, 0.48, m) * (1.0 - smoothstep(0.66 + 0.14 * bow, 0.82 + 0.12 * bow, m));
     float churn = fbm(p0 * 3.2 + warp * 1.2 + vec2(t * 0.4, -t * 0.3));
     float tear = mix(streak, churn, smoothstep(0.2, 0.7, bow));
-    foam = max(foam, hullBand * smoothstep(0.4, 0.66, tear + bow * 0.12) * (0.4 + 0.5 * bow) * min(cur, 2.0));
+    foam = max(foam, hullBand * inner * smoothstep(0.4, 0.66, tear + bow * 0.12) * (0.4 + 0.5 * bow) * min(cur, 2.0));
     // След за кормой: бурун и расходящиеся усы.
     vec2 w = wakeAt(p0, fd);
     // Бурун — клочьями, с завихрением, а не струями.
