@@ -16,6 +16,7 @@ the map image on every player's screen:
 - **ship underway** — water has "Current" and "Current direction": the ship stands still, tokens walk the deck, and the water runs past the hull. The pattern and whitecaps drift, foam piles up at the bow, a churned wake and diverging arms trail behind the stern. The hole in the water region is the hull (Cartographer cuts water out under the deck and walls). Bottom glints and fish fade out underway — there is no bottom to see at sea;
 - **hammocks** — sway with the ship's roll: the hooks on the posts stay put, the canvas swings from side to side, all hammocks nearly in step. The tile flag `swing` holds the hook ends as fractions of the image from its middle; Cartographer sets it on hammocks itself;
 - **hover** — an airship or a balloon (tile) slowly drifts in a figure eight, turns a little and rises and sinks, while a soft shadow crawls over the ground and roofs below. In the tile window, "Appearance" tab, "Hover" — strength from 0 to 3. The gnome airship from Cartographer's steampunk set also spins its propellers and its runes pulse with light;
+- **afloat** — a sheet of paper, a float, a chip of wood (tile) lies on the water and barely bobs: it drifts a few hundredths of a cell and turns a couple of degrees, each tile in its own rhythm. In the tile window, "Appearance" tab, "Afloat" — strength from 0 to 3. Cartographer flags sheets of paper lying on water;
 - **burning tiles** — the tile itself burns (a house, a tree, a cart): in the tile window, "Appearance" tab, "Fire" — smouldering, burning or ablaze. The fire is the same as the region one: tongues spread from the hearths in every direction and lean with the fire wind; a small crown burns as one hearth in the middle. Flames appear only where the image is opaque (a baked semi-transparent shadow does not burn) and sway with the crown; smoke drifts above tokens with the fire wind, with Foundry light and the crackle of a large bonfire around it.
 - **chimney smoke** — puffs rise from the chimneys on roofs, grow, lighten and drift with the scene wind ("Wind in the crowns" settings) over the neighbouring roofs too; when a token walks into the house and the roof fades, its smoke fades too. Cartographer marks the chimneys on the roof tile itself (flag `chimneys`: middle and size in scene pixels);
 - **windsock** — the striped cone bends away from its pole in the wind, and ripples run along the cloth (tile flag `sock`, the pole on the left of the image; Cartographer sets it itself);
@@ -42,6 +43,9 @@ on tree crowns on export. Flag your own tile from the console:
 
 Tiles flagged `flags.burn-living-map.hover` (a number, the strength) float:
 Cartographer sets it on airships and balloons on export.
+
+Tiles flagged `flags.burn-living-map.afloat` (a number, the strength) bob on the water:
+Cartographer sets it on paper and floats lying on water.
 
 Crowns flagged `flags.burn-living-map.particles` emit particles: `leaves` —
 falling leaves (their colour is taken from the crown image; in water a leaf makes

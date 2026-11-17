@@ -10,6 +10,7 @@ import { registerBlaze, rebuildBlaze, heatOf } from "./blaze.js";
 import { registerRoofs } from "./roofs.js";
 import { registerMachines, rebuildMachines } from "./machines.js";
 import { registerHover, rebuildHover } from "./hover.js";
+import { registerAfloat, rebuildAfloat } from "./afloat.js";
 import { registerMotion, rebuildMotion, motionStatus } from "./motion.js";
 import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
@@ -55,7 +56,7 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "enabled", {
     name: "BLM.Setting.Enabled", hint: "BLM.Setting.EnabledHint",
     scope: "client", config: true, type: Boolean, default: true,
-    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); rebuildMotion(); rebuildChimneys(); }
+    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); rebuildAfloat(); rebuildMotion(); rebuildChimneys(); }
   });
   game.settings.register(MODULE_ID, "strength", {
     name: "BLM.Setting.Strength", hint: "BLM.Setting.StrengthHint",
@@ -92,6 +93,8 @@ Hooks.once("init", () => {
   registerMachines();
   // Парение: дирижабль плывёт, покачивается, тень ползёт по земле (см. hover.js).
   registerHover();
+  // На воде: лист бумаги, поплавок едва покачиваются (см. afloat.js).
+  registerAfloat();
   registerMotion();
   // Колонки: эквалайзер под музыку, кольца, кнопка на панели тайла (см. speaker.js).
   registerSpeakers();
@@ -114,7 +117,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
-  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildHover, rebuildMotion, motionStatus, rebuildScuppers, rebuildChimneys, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS, rift: riftApi };
+  game.modules.get(MODULE_ID).api = { rebuildMachines, rebuildHover, rebuildAfloat, rebuildMotion, motionStatus, rebuildScuppers, rebuildChimneys, rebuildSpeakers, speakerSource, rebuild, rebuildWind, rebuildParticles, rebuildWeather, rebuildBlaze, driftSheet, clearBurrows, surfaceUnder, status, sounding, EFFECTS, rift: riftApi };
   Hooks.callAll("hubRegisterTile", {
     moduleId: MODULE_ID,
     title: loc("Title"),
