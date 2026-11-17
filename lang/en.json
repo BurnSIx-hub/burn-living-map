@@ -218,5 +218,7 @@
   "BLM.Rift.PlaceHint": "Drag across the floor to lay a rift along it. Click for a rift in a random direction. Esc or right-click cancels.",
   "BLM.Rift.StormOn": "Anomaly storm: rifts will open by themselves.",
   "BLM.Rift.StormOff": "Anomaly storm stopped.",
-  "BLM.Rift.NoArea": "Anomaly storm: nowhere to open — select tokens or a region."
+  "BLM.Rift.NoArea": "Anomaly storm: nowhere to open — select tokens or a region.",
+  "BLM.Setting.objectShadows": "Object shadows",
+  "BLM.Setting.objectShadowsHint": "A shadow from the scene's sun under objects exported from Kartograf. This computer only — turn off on a weak machine."
 }

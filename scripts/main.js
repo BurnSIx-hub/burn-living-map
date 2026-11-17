@@ -11,6 +11,7 @@ import { registerRoofs } from "./roofs.js";
 import { registerMachines, rebuildMachines } from "./machines.js";
 import { registerHover, rebuildHover } from "./hover.js";
 import { registerAfloat, rebuildAfloat } from "./afloat.js";
+import { registerShadows, rebuildShadows } from "./shadows.js";
 import { registerMotion, rebuildMotion, motionStatus } from "./motion.js";
 import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
@@ -56,7 +57,7 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "enabled", {
     name: "BLM.Setting.Enabled", hint: "BLM.Setting.EnabledHint",
     scope: "client", config: true, type: Boolean, default: true,
-    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); rebuildAfloat(); rebuildMotion(); rebuildChimneys(); }
+    onChange: () => { rebuild(); rebuildWind(); rebuildParticles(); rebuildAmbience(); rebuildClouds(); rebuildWeather(); drawBurrows(); rebuildBlaze(); rebuildMachines(); rebuildHover(); rebuildAfloat(); rebuildShadows(); rebuildMotion(); rebuildChimneys(); }
   });
   game.settings.register(MODULE_ID, "strength", {
     name: "BLM.Setting.Strength", hint: "BLM.Setting.StrengthHint",
@@ -95,6 +96,8 @@ Hooks.once("init", () => {
   registerHover();
   // На воде: лист бумаги, поплавок едва покачиваются (см. afloat.js).
   registerAfloat();
+  // Тени предметов от солнца сцены: Картограф выгружает предметы без тени (см. shadows.js).
+  registerShadows();
   registerMotion();
   // Колонки: эквалайзер под музыку, кольца, кнопка на панели тайла (см. speaker.js).
   registerSpeakers();

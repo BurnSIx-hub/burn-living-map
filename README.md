@@ -149,6 +149,10 @@ All module settings live in their own window, not in the game settings. With Bur
 
 Sliders take effect at once; closing the window without saving brings everything back.
 
+## Object shadows
+
+Tiles flagged `flags.burn-living-map.shadow` (Cartographer 0.2.43+ exports every object this way, its picture without a shadow) get a shadow from the scene's sun: `flags.burn-living-map.shadows` — `angle` (where the shadow falls, degrees clockwise from "right"), `dist` and `blur` (grid cells), `opacity`, `fade` (0 — even, 1 — fades towards its end). The shadow is the tile's silhouette, black and blurred, baked once per picture (a hundred identical barrels share one texture); it lies right under its tile and follows it when the tile is moved, turned or hidden. On this computer only: "Object shadows" in the settings window.
+
 ## Cloud shadows
 
 Scene window, "Ambience" tab: strength (0 is off) and density. Soft cloud shadows drift over the scene with the Wild Canvas wind; every 1–3 minutes a cloud covers the sun for a few seconds and the whole scene dims. Foundry lighting is unchanged: it is a layer of its own above the map, roofs and tokens. Shadows fade at night and soften in snow. Cartographer sets them for forests and town quarters.
