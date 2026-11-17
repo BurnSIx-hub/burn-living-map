@@ -8,6 +8,9 @@
 // подсвечиваются по своему голубому цвету и медленно дышат. Вентилятор — круг той же картинки, повёрнутый под
 // маской, второй полупрозрачный слой со сдвигом даёт размытие. Огоньки: большая
 // часть горит ровно, остальные гаснут и вспыхивают каждый в своём ритме.
+//
+// Ассет, которого в таблице нет, оживает своей раскладкой — пометкой `layout` на тайле
+// (см. `ownLayout`): Картограф кладёт её из файла live.json папки ассетов.
 
 import { bakeTexture, placeBaked } from "./hover.js";
 
@@ -20,10 +23,53 @@ export const LAYOUTS = {"Airship_Gnome_Brass_A":{"rotors":[[0.12656,0.77266,0.01
 // цвет сердцевины, цвет ореола] — доли ширины картинки.
 LAYOUTS.Signal_Beacon_Arcane_A = { arcs: [0.499, 0.498, 0.165, 0.405, 3, 0xeaf7ff, 0x5cb8ff] };
 
-/** Ключ раскладки: пометка `machine` или имя картинки тайла. */
+/** Ключ своей раскладки: её нет в таблице, она лежит в пометке тайла. */
+const OWN = "*own";
+
+/**
+ * Своя раскладка тайла — пометка `layout`: вентиляторы, лампы, огоньки ассета, которого нет
+ * в таблице выше. Картограф кладёт её из файла live.json папки ассетов, Мастер может вписать
+ * руками. Берётся то, что рисуется по одним долям картинки; числа проверяются.
+ *   fans:  [[cx, cy, радиус, скорость]] — доли ширины и высоты картинки, рад/с (можно без скорости);
+ *   lamps: [[x, y, радиус, цвет]] — цвет 0 голубой, 1 пурпурный либо "#rrggbb";
+ *   leds:  [x, y, цвет, …] — x и y в тысячных долях; ledSize — доля ширины.
+ */
+function ownLayout(doc) {
+  const raw = doc?.flags?.[MODULE_ID]?.layout;
+  if (!raw || typeof raw !== "object") return null;
+  const num = (v, lo, hi) => (v !== null && v !== "" && Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : null);
+  const colour = (v) => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? Math.max(2, parseInt(v.slice(1), 16)) : num(v ?? 0, 0, 0xffffff));
+  const whole = (list) => list.every((v) => v !== null);
+  const L = {};
+  if (Array.isArray(raw.fans)) {
+    const fans = raw.fans.slice(0, 12).filter(Array.isArray)
+      .map((f) => [num(f[0], 0, 1), num(f[1], 0, 1), num(f[2], 0.005, 0.75), ...(f[3] == null ? [] : [num(f[3], -30, 30)])]).filter(whole);
+    if (fans.length) L.fans = fans;
+  }
+  if (Array.isArray(raw.lamps)) {
+    const lamps = raw.lamps.slice(0, 64).filter(Array.isArray)
+      .map((l) => [num(l[0], 0, 1), num(l[1], 0, 1), num(l[2], 0.002, 0.3), colour(l[3])]).filter(whole);
+    if (lamps.length) L.lamps = lamps;
+  }
+  if (Array.isArray(raw.leds)) {
+    const leds = [];
+    for (let i = 0; i + 2 < raw.leds.length && leds.length < 6000; i += 3) {
+      const led = [num(raw.leds[i], 0, 1000), num(raw.leds[i + 1], 0, 1000), colour(raw.leds[i + 2])];
+      if (whole(led)) leds.push(...led);
+    }
+    if (leds.length) {
+      L.leds = leds;
+      L.ledSize = num(raw.ledSize ?? 0.0063, 0.002, 0.05) ?? 0.0063;
+    }
+  }
+  return Object.keys(L).length ? L : null;
+}
+
+/** Ключ раскладки: пометка `machine`, своя раскладка тайла или имя картинки тайла. */
 function keyOf(doc) {
   const own = doc?.flags?.[MODULE_ID]?.machine;
   if (own && LAYOUTS[own]) return own;
+  if (ownLayout(doc)) return OWN;
   const src = doc?.texture?.src ?? "";
   return Object.keys(LAYOUTS).find((k) => src.toLowerCase().includes(k.toLowerCase())) ?? null;
 }
@@ -408,12 +454,13 @@ function drawArcs(m, t, dt, x0, y0, tw) {
 function build(tile, key) {
   const tm = tile.mesh;
   if (!tm) return null;
-  const L = LAYOUTS[key];
+  const L = key === OWN ? ownLayout(tile.document) : LAYOUTS[key];
+  if (!L) return null;
   const box = new PIXI.Container();
   box.name = `${MODULE_ID}.machine.${tile.id}`;
   box.eventMode = "none";
   canvas.primary.addChild(box);
-  const m = { tile, key, box, fans: [], leds: null, tex: null, sortedFor: null, seed: hash(tile.id.length + tile.id.charCodeAt(0)) * 100 };
+  const m = { tile, key, L, box, fans: [], leds: null, tex: null, sortedFor: null, seed: hash(tile.id.length + tile.id.charCodeAt(0)) * 100 };
   if (L.fans) {
     for (const [i, f] of L.fans.entries()) {
       const mask = new PIXI.Graphics(), mask2 = new PIXI.Graphics();
@@ -523,7 +570,7 @@ function draw(m, dt, t) {
 
   // Огоньки: большинство горит ровно, часть мигает каждый в своём ритме.
   if (m.leds) m.leds.clear();
-  const LL = LAYOUTS[m.key];
+  const LL = m.L;
   // Полоски заряда: набираются по одной, полная — мерцает, потом сначала.
   if (LL.bars) {
     const [bx0, by0, bx1, by1, n] = LL.bars;
@@ -545,7 +592,7 @@ function draw(m, dt, t) {
     for (const [i, [lx, ly, lr, c]] of LL.lamps.entries()) {
       const x = x0 + lx * tw, y = y0 + ly * th, r = lr * tw;
       const ph = (t * 0.8 + hash(i + m.seed)) % 1;
-      const col = c ? 0xff7cf0 : 0x9ffcff;
+      const col = c > 1 ? c : c ? 0xff7cf0 : 0x9ffcff; // 0 и 1 — цвета набора, больше — свой цвет
       if (ph < 0.12) g.beginFill(0x1a0d1c, 0.8).drawCircle(x, y, r * 1.05).endFill();
       else {
         const a = 0.15 + 0.35 * Math.max(0, Math.sin(t * 5 + i));
@@ -567,7 +614,7 @@ function draw(m, dt, t) {
       const on = ((t / period + phase) % 1) < (h < 0.8 ? 0.82 : 0.35);
       const x = x0 + (leds[i] / 1000) * tw, y = y0 + (leds[i + 1] / 1000) * th;
       if (on && h > 0.92) {
-        g.beginFill(leds[i + 2] ? 0xff7cf0 : 0x9ffcff, 0.9).drawRect(x - sz, y - sz * 0.8, sz * 2, sz * 1.6).endFill();
+        g.beginFill(leds[i + 2] > 1 ? leds[i + 2] : leds[i + 2] ? 0xff7cf0 : 0x9ffcff, 0.9).drawRect(x - sz, y - sz * 0.8, sz * 2, sz * 1.6).endFill();
       } else if (!on) {
         g.beginFill(0x15121c, 0.85).drawRect(x - sz * 1.1, y - sz * 0.9, sz * 2.2, sz * 1.8).endFill();
       }

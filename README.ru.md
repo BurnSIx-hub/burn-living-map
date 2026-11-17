@@ -42,6 +42,13 @@
 Парит тайл с пометкой `flags.burn-living-map.hover` (число — сила): Картограф
 ставит её дирижаблям и аэростатам при выгрузке.
 
+Техника на тайле — вентиляторы крутятся, лампы тлеют и вспыхивают, огоньки мигают. Ассеты
+киберпанк-набора Картографа модуль знает сам (пометка `flags.burn-living-map.machine`, окно тайла,
+вкладка «Вид», «Техника»). Любой другой тайл оживает своей раскладкой — пометкой
+`flags.burn-living-map.layout`: `{"fans": [[cx, cy, радиус, скорость]], "lamps": [[x, y, радиус, "#rrggbb"]],
+"leds": [x, y, цвет, …], "ledSize": 0.006}` — доли картинки (у `leds` x и y в тысячных, цвет 0 — голубой,
+1 — пурпурный). Картограф 0.2.41 берёт раскладку из файла `live.json` в папке ассетов.
+
 Покачивается на воде тайл с пометкой `flags.burn-living-map.afloat` (число — сила):
 Картограф ставит её бумаге и поплавкам, лежащим на воде.
 
@@ -139,7 +146,7 @@
 
 ## Звуки мест
 
-**Звук сцены** — окно сцены, вкладка «Разное», рядом с плейлистом: «Звук места». Лес по сезону, пещера, подземелье, квартал, таверна, дом. Играет по кругу на всей сцене. Картограф ставит его сам при выгрузке.
+**Звук сцены** — окно сцены, вкладка «Разное», рядом с плейлистом: «Звук места». Лес по сезону, пещера, подземелье, квартал, станция, таверна, дом. Играет по кругу на всей сцене. Картограф ставит его сам при выгрузке.
 
 **Звук внутри** — у любой области можно выбрать «Звук внутри» (таверна, дом…): пока токен в ней, играет этот звук, а звук сцены стихает; на пороге они сменяются за полклетки. Картограф так обводит комнаты дома и таверны, а звуком сцены ставит лес по времени года.
 
@@ -167,6 +174,7 @@
 - `town-bells.mp3` — «Rostrenen bells market day», bruno.auzet, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/826902/>
 - `tavern.mp3` — «Tavern_Ambience_Inside_Laughter.WAV», ivolipa, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/326313/>
 - `house-fireplace.mp3` — «Aachen_Burning Fireplace Crackling Fire Sounds.wav», visionear, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/501417/>
+- `station-vent.wav`, `station-core.wav` — гул вентиляции и гул реактора станции: синтез, записей нет; собираются скриптом `tools/station_synth.py` из репозитория
 - `water-stream.mp3` — «Stream River Water Up Close», jackthemurray, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/433589/>
 - `water-brook.mp3` — «Woodland Stream March 2016.wav», plantmonkey, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/376709/>
 - `swamp-night.mp3` — «Lake At Night.aif», timgormly, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/148318/>

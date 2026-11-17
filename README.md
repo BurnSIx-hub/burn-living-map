@@ -44,6 +44,13 @@ on tree crowns on export. Flag your own tile from the console:
 Tiles flagged `flags.burn-living-map.hover` (a number, the strength) float:
 Cartographer sets it on airships and balloons on export.
 
+Machines on a tile: fans spin, lamps smoulder and flare, leds blink. The module knows the assets of
+Cartographer's cyberpunk set by itself (flag `flags.burn-living-map.machine`, tile window, "Appearance"
+tab, "Machines"). Any other tile comes alive with its own layout, the flag `flags.burn-living-map.layout`:
+`{"fans": [[cx, cy, radius, speed]], "lamps": [[x, y, radius, "#rrggbb"]], "leds": [x, y, colour, …],
+"ledSize": 0.006}` — fractions of the picture (`leds`: x and y in thousandths, colour 0 cyan, 1 magenta).
+Cartographer 0.2.41 takes the layout from `live.json` in the asset folder.
+
 Tiles flagged `flags.burn-living-map.afloat` (a number, the strength) bob on the water:
 Cartographer sets it on paper and floats lying on water.
 
@@ -148,7 +155,7 @@ Scene window, "Ambience" tab: strength (0 is off) and density. Soft cloud shadow
 
 ## Place sounds
 
-**Scene sound** — scene window, "Miscellaneous" tab, next to the playlist: "Place sound". Seasonal forest, cave, dungeon, town, tavern, house. It loops over the whole scene. Cartographer sets it on export.
+**Scene sound** — scene window, "Miscellaneous" tab, next to the playlist: "Place sound". Seasonal forest, cave, dungeon, town, station, tavern, house. It loops over the whole scene. Cartographer sets it on export.
 
 **Sound inside** — any region can have a "Sound inside" (tavern, house…): while a token is in it, that sound plays and the scene sound fades; at the threshold they cross over within half a square. Cartographer outlines the rooms of houses and taverns this way and sets the seasonal forest as the scene sound.
 
@@ -176,6 +183,7 @@ The overall volume is the "Environment" slider (a region's own volume is multipl
 - `town-bells.mp3` — "Rostrenen bells market day", bruno.auzet, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/826902/>
 - `tavern.mp3` — "Tavern_Ambience_Inside_Laughter.WAV", ivolipa, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/326313/>
 - `house-fireplace.mp3` — "Aachen_Burning Fireplace Crackling Fire Sounds.wav", visionear, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/501417/>
+- `station-vent.wav`, `station-core.wav` — a station's ventilation hum and reactor hum: synthesized, no recordings; built by `tools/station_synth.py` in the repository
 - `water-stream.mp3` — "Stream River Water Up Close", jackthemurray, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/433589/>
 - `water-brook.mp3` — "Woodland Stream March 2016.wav", plantmonkey, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), <https://freesound.org/s/376709/>
 - `swamp-night.mp3` — "Lake At Night.aif", timgormly, [CC0](https://creativecommons.org/publicdomain/zero/1.0/), <https://freesound.org/s/148318/>

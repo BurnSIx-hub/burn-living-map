@@ -13,7 +13,7 @@
 // в окне области; Мастер слышит его сразу, ещё не сохранив (`preview`).
 // Всё идёт в контекст окружения (`game.audio.environment`) и слушается ползунка
 // «Окружение»: громкость области умножается на него. Петли сшиваются перекрёстным затуханием: стык записи не щёлкает.
-// Записи — Freesound, авторы в README.
+// Записи — Freesound, авторы в README. Звуки станции — синтез (tools/station_synth.py), записей нет.
 //  • горящий тайл (blaze.js) звучит, как большой костёр, — по своей рамке.
 
 import { blazingShapes } from "./blaze.js";
@@ -36,7 +36,9 @@ const GAIN = {
   "cave-drips.mp3": 2.43, "dungeon-air.mp3": 0.41, "dungeon-dark.mp3": 0.52, "town-street.mp3": 1.11,
   "town-village.mp3": 2.48, "town-bells.mp3": 3.2, "tavern.mp3": 0.51, "house-fireplace.mp3": 1.32,
   "water-stream.mp3": 7.94, "water-brook.mp3": 7.94, "swamp-night.mp3": 3.85, "swamp-lilypads.mp3": 4.12,
-  "swamp-april.mp3": 1.55, "swamp-frogs.mp3": 1.55, "fire-campfire.mp3": 0.75, "fire-bonfire.mp3": 0.77
+  "swamp-april.mp3": 1.55, "swamp-frogs.mp3": 1.55, "fire-campfire.mp3": 0.75, "fire-bonfire.mp3": 0.77,
+  // Гул станции записан на общий уровень (−24,6 дБ); реактор чуть громче: он ниже и на слух тише вентиляции.
+  "station-vent.wav": 0.8, "station-core.wav": 1.2
 };
 const L = (file, gain = 1) => ({ file, gain: (GAIN[file] ?? 1) * gain });
 
@@ -55,6 +57,8 @@ export const PLACES = {
   "dungeon-3":     [[L("dungeon-dark.mp3")]],
   "town-1":        [[L("town-street.mp3")]],
   "town-2":        [[L("town-village.mp3")]],
+  "station-1":     [[L("station-vent.wav")]],
+  "station-2":     [[L("station-core.wav")]],
   "tavern":        [[L("tavern.mp3")]],
   "house":         [[L("house-fireplace.mp3")]]
 };
@@ -367,6 +371,7 @@ Hooks.on("renderSceneConfig", (app, element) => {
       ${group(loc("Place.Cave"), by("cave-"))}
       ${group(loc("Place.Dungeon"), by("dungeon-"))}
       ${group(loc("Place.Town"), by("town-"))}
+      ${group(loc("Place.Station"), by("station-"))}
       ${opt("tavern", loc("Place.tavern"))}
       ${opt("house", loc("Place.house"))}
     </select></div>
