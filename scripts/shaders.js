@@ -63,6 +63,10 @@ vec4 over(vec4 dst, vec3 c, float a) { return vec4(c * a, a) + dst * (1.0 - a); 
 const WATER = COMMON + `
 // Блики на дне: преломление ряби, повторённое несколько раз.
 float caustic(vec2 p, float t) {
+  // Формула бликов рассчитана на координаты около −250 (как в исходном шейдере): у
+  // клеток карты (0…80) деление на синус давало другой режим — вода светлела вся, а
+  // там, где выражение проходит через ноль, оставались тёмные рваные «осколки».
+  p -= vec2(250.0);
   vec2 i = p;
   float c = 1.0;
   for (int n = 0; n < 4; n++) {
@@ -293,7 +297,7 @@ void main() {
   }
   // Блики на дне видны на мелководье; в открытом море на ходу дна не видно.
   float bottom = 1.0 - smoothstep(0.0, 0.5, cur);
-  if (bottom > 0.0) o.rgb += vec3(0.85, 1.0, 1.0) * caustic(p * 1.25 + warp * 0.6, t * 0.6 + 23.0) * 0.16 * deep * uCaustic * bottom;
+  if (bottom > 0.0) o.rgb += vec3(0.85, 1.0, 1.0) * caustic(p * 1.25 + warp * 0.6, t * 0.6 + 23.0) * 0.4 * deep * uCaustic * bottom;
   float glint = pow(noise(p * 9.0 + vec2(t * 1.5, -t)) * noise(p * 14.0 - vec2(t, t * 1.3)), 5.0);
   o.rgb += vec3(1.0) * smoothstep(0.25, 0.5, glint) * 0.3 * deep * uGlint;
   // Пена у берега: в полосе края маски, бегущими волнами.
