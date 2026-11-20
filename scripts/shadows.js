@@ -67,25 +67,31 @@ export function clearShadows() {
 
 export function rebuildShadows() {
   for (const id of [...shades.keys()]) forget(id);
-  if (!canvas.ready || !canvas.tiles || !enabled()) return;
+  if (!canvas.ready || !canvas.tiles) return;
+  for (const tile of canvas.tiles.placeables) addShadow(tile);
+}
+
+/** Тень от солнца тайлу Foundry или мешу Boundless под видом тайла (см. boundless.js). */
+export function addShadow(tile) {
+  if (!shadowOf(tile.document) || !tile.mesh || shades.has(tile.id) || !canvas.ready || !enabled()) return;
   const ls = layers(sun());
-  for (const tile of canvas.tiles.placeables) {
-    if (!shadowOf(tile.document) || !tile.mesh) continue;
-    const sprites = ls.map((l, i) => {
-      const sp = new PIXI.Sprite(PIXI.Texture.EMPTY);
-      sp.name = `${MODULE_ID}.shadow.${tile.id}.${i}`;
-      sp.eventMode = "none";
-      sp.visible = false;
-      canvas.primary.addChild(sp);
-      return sp;
-    });
-    shades.set(tile.id, { tile, sprites, layers: ls, sortedFor: null });
-  }
-  if (shades.size && !ticking) {
+  const sprites = ls.map((l, i) => {
+    const sp = new PIXI.Sprite(PIXI.Texture.EMPTY);
+    sp.name = `${MODULE_ID}.shadow.${tile.id}.${i}`;
+    sp.eventMode = "none";
+    sp.visible = false;
+    canvas.primary.addChild(sp);
+    return sp;
+  });
+  shades.set(tile.id, { tile, sprites, layers: ls, sortedFor: null });
+  if (!ticking) {
     canvas.app.ticker.add(follow);
     ticking = true;
   }
 }
+
+export const dropShadow = (id) => forget(id);
+export const shadowKeys = () => shades.keys();
 
 /** Силуэт картинки, размытый на `blur` клеток при `perCell` точках картинки на клетку. */
 function baked(tex, perCell, blur) {

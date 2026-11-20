@@ -320,6 +320,15 @@ function drop(id) {
   }
   if (m.shadow && !m.shadow.destroyed) m.shadow.destroy();
   m.baked?.rt.destroy(true);
+  // Вагонетка уходит из сцепки; последняя — сцепка молчит.
+  const tr = m.train;
+  if (tr) {
+    tr.cars = tr.cars.filter((c) => c !== m);
+    if (!tr.cars.length) {
+      silence(tr);
+      trains.delete(tr.key);
+    }
+  }
   movers.delete(id);
 }
 
@@ -331,37 +340,43 @@ export function clearMotion() {
 
 export function rebuildMotion() {
   clearMotion();
-  if (!canvas.ready || !canvas.tiles || !game.settings.get(MODULE_ID, "enabled")) return;
-  for (const tile of canvas.tiles.placeables) {
-    if (!tile.mesh) continue;
-    const slew = slewOf(tile.document);
-    const rail = slew ? null : railOf(tile.document);
-    if (!slew && !rail) continue;
-    const m = { tile, slew, rail, phase: hash(tile.id), base: null, set: null, sortedFor: null };
-    if (slew) {
-      m.shadow = new PIXI.Sprite(PIXI.Texture.EMPTY);
-      m.shadow.name = `${MODULE_ID}.slew.${tile.id}`;
-      m.shadow.eventMode = "none";
-      canvas.primary.addChild(m.shadow);
+  if (!canvas.ready || !canvas.tiles) return;
+  for (const tile of canvas.tiles.placeables) addMotion(tile);
+}
+
+/** Кран или вагонетка: тайл Foundry или меш Boundless под видом тайла (см. boundless.js). */
+export function addMotion(tile) {
+  if (!tile.mesh || movers.has(tile.id) || !canvas.ready || !game.settings.get(MODULE_ID, "enabled")) return;
+  const slew = slewOf(tile.document);
+  const rail = slew ? null : railOf(tile.document);
+  if (!slew && !rail) return;
+  const m = { tile, slew, rail, phase: hash(tile.id), base: null, set: null, sortedFor: null };
+  if (rail) {
+    let tr = trains.get(rail.key);
+    if (!tr) {
+      const measured = measure(rail.path);
+      if (!measured.length) return;
+      tr = { key: rail.key, measure: measured, phase: hash(rail.key), cars: [] };
+      trains.set(rail.key, tr);
     }
-    if (rail) {
-      let tr = trains.get(rail.key);
-      if (!tr) {
-        const measured = measure(rail.path);
-        if (!measured.length) continue;
-        tr = { key: rail.key, measure: measured, phase: hash(rail.key), cars: [] };
-        trains.set(rail.key, tr);
-      }
-      tr.cars.push(m);
-      m.train = tr;
-    }
-    movers.set(tile.id, m);
+    tr.cars.push(m);
+    m.train = tr;
   }
-  if (movers.size && !ticking) {
+  if (slew) {
+    m.shadow = new PIXI.Sprite(PIXI.Texture.EMPTY);
+    m.shadow.name = `${MODULE_ID}.slew.${tile.id}`;
+    m.shadow.eventMode = "none";
+    canvas.primary.addChild(m.shadow);
+  }
+  movers.set(tile.id, m);
+  if (!ticking) {
     canvas.app.ticker.add(tick);
     ticking = true;
   }
 }
+
+export const dropMotion = (id) => drop(id);
+export const motionKeys = () => movers.keys();
 
 /** Основа меша: Foundry переставил его (правка тайла) — это новое исходное место. */
 function baseOf(m) {

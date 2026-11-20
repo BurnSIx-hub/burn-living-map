@@ -47,17 +47,23 @@ export function clearAfloat() {
 
 export function rebuildAfloat() {
   clearAfloat();
-  if (!canvas.ready || !canvas.tiles || !game.settings.get(MODULE_ID, "enabled")) return;
-  for (const tile of canvas.tiles.placeables) {
-    const amp = afloatOf(tile.document);
-    if (!amp || !tile.mesh) continue;
-    floaters.set(tile.id, { tile, amp, phase: hash(tile.id) * 100, base: null, set: null });
-  }
-  if (floaters.size && !ticking) {
+  if (!canvas.ready || !canvas.tiles) return;
+  for (const tile of canvas.tiles.placeables) addAfloat(tile);
+}
+
+/** Пустить тайл по воде: тайл Foundry или меш Boundless под видом тайла (см. boundless.js). */
+export function addAfloat(tile) {
+  const amp = afloatOf(tile.document);
+  if (!amp || !tile.mesh || floaters.has(tile.id) || !canvas.ready || !game.settings.get(MODULE_ID, "enabled")) return;
+  floaters.set(tile.id, { tile, amp, phase: hash(tile.id) * 100, base: null, set: null });
+  if (!ticking) {
     canvas.app.ticker.add(bob);
     ticking = true;
   }
 }
+
+export const dropAfloat = (id) => settle(id);
+export const afloatKeys = () => floaters.keys();
 
 function bob() {
   if (!floaters.size || !canvas.ready) {

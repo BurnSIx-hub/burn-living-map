@@ -500,18 +500,28 @@ export function clearMachines() {
 
 export function rebuildMachines() {
   clearMachines();
-  if (!canvas.ready || !canvas.tiles || !game.settings.get(MODULE_ID, "enabled")) return;
-  for (const tile of canvas.tiles.placeables) {
-    const key = keyOf(tile.document);
-    if (!key) continue;
-    const m = build(tile, key);
-    if (m) machines.set(tile.id, m);
-  }
-  if (machines.size && !ticking) {
+  if (!canvas.ready || !canvas.tiles) return;
+  for (const tile of canvas.tiles.placeables) addMachine(tile);
+}
+
+/** Есть ли у тайла раскладка: пометка, своя раскладка или имя картинки. */
+export const machineOf = (doc) => keyOf(doc);
+
+/** Запустить технику: тайл Foundry или меш Boundless под видом тайла (см. boundless.js). */
+export function addMachine(tile) {
+  if (machines.has(tile.id) || !canvas.ready || !game.settings.get(MODULE_ID, "enabled")) return;
+  const key = keyOf(tile.document);
+  const m = key ? build(tile, key) : null;
+  if (!m) return;
+  machines.set(tile.id, m);
+  if (!ticking) {
     canvas.app.ticker.add(tick);
     ticking = true;
   }
 }
+
+export const dropMachine = (id) => drop(id);
+export const machineKeys = () => machines.keys();
 
 function tick() {
   if (!machines.size || !canvas.ready) {

@@ -162,6 +162,20 @@ function dropOne(id) {
   speakers.delete(id);
 }
 
+/** Колонка на меше Boundless под видом тайла (см. boundless.js). */
+export function addSpeaker(tile) {
+  if (speakers.has(tile.id) || !canvas.ready || !stateOf(tile.document)) return;
+  rebuildOne(tile);
+  if (speakers.size && !ticking) {
+    last = performance.now() / 1000;
+    canvas.app.ticker.add(tick);
+    ticking = true;
+  }
+}
+
+export const dropSpeaker = (id) => dropOne(id);
+export const speakerKeys = () => speakers.keys();
+
 export function clearSpeakers() {
   for (const id of [...speakers.keys()]) dropOne(id);
 }

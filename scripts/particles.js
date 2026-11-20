@@ -302,6 +302,11 @@ export function rebuildParticles() {
     .filter((s) => s.kind);
   wet = (canvas.scene?.regions ?? []).some((r) => WET.includes(r.flags?.[MODULE_ID]?.effect));
   if (!sources.length && !wet) return;
+  build();
+}
+
+/** Слои частиц и тикер. */
+function build() {
   texturesReady();
   layer = new PIXI.Container();
   layer.name = `${MODULE_ID}.particles`;
@@ -329,6 +334,26 @@ export function rebuildParticles() {
     ticking = true;
   }
 }
+
+/** Листья или светлячки с кроны — меша Boundless под видом тайла (см. boundless.js). */
+export function addParticles(tile) {
+  const kind = kindOf(tile.document);
+  if (!kind || !tile.mesh || !canvas.ready || !canvas.primary || sources.some((s) => s.tile.id === tile.id)) return;
+  sources.push({ tile, kind, colors: null, acc: Math.random() });
+  if (!layer || layer.destroyed) return build();
+  const e = tile.document.elevation ?? 0;
+  if (e > layer.elevation) {
+    layer.elevation = e;
+    canvas.primary.sortDirty = true;
+  }
+}
+
+/** Крона ушла: новых частиц нет, вылетевшие догорают сами. */
+export function dropParticles(id) {
+  sources = sources.filter((s) => s.tile.id !== id);
+}
+
+export const particleKeys = () => sources.map((s) => s.tile.id);
 
 export function clearParticles() {
   for (const p of live) {

@@ -94,21 +94,27 @@ export function clearHover() {
 
 export function rebuildHover() {
   clearHover();
-  if (!canvas.ready || !canvas.tiles || !game.settings.get(MODULE_ID, "enabled")) return;
-  for (const tile of canvas.tiles.placeables) {
-    const amp = hoverOf(tile.document);
-    if (!amp || !tile.mesh) continue;
-    const shadow = new PIXI.Sprite(PIXI.Texture.EMPTY);
-    shadow.name = `${MODULE_ID}.hover.${tile.id}`;
-    shadow.eventMode = "none";
-    canvas.primary.addChild(shadow);
-    ships.set(tile.id, { tile, amp, phase: hash(tile.id) * 100, shadow, baked: null, base: null, set: null, sortedFor: null });
-  }
-  if (ships.size && !ticking) {
+  if (!canvas.ready || !canvas.tiles) return;
+  for (const tile of canvas.tiles.placeables) addHover(tile);
+}
+
+/** Поднять тайл в воздух: тайл Foundry или меш Boundless под видом тайла (см. boundless.js). */
+export function addHover(tile) {
+  const amp = hoverOf(tile.document);
+  if (!amp || !tile.mesh || ships.has(tile.id) || !canvas.ready || !game.settings.get(MODULE_ID, "enabled")) return;
+  const shadow = new PIXI.Sprite(PIXI.Texture.EMPTY);
+  shadow.name = `${MODULE_ID}.hover.${tile.id}`;
+  shadow.eventMode = "none";
+  canvas.primary.addChild(shadow);
+  ships.set(tile.id, { tile, amp, phase: hash(tile.id) * 100, shadow, baked: null, base: null, set: null, sortedFor: null });
+  if (!ticking) {
     canvas.app.ticker.add(float);
     ticking = true;
   }
 }
+
+export const dropHover = (id) => land(id);
+export const hoverKeys = () => ships.keys();
 
 function float() {
   if (!ships.size || !canvas.ready) {

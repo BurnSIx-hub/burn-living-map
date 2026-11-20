@@ -112,29 +112,40 @@ export function rebuildWind() {
   trees.clear();
   ropes.clear();
   if (!canvas.ready || !canvas.tiles) return;
-  for (const tile of canvas.tiles.placeables) {
-    if (socked(tile.document)) {
-      ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, sock: true });
-      continue;
-    }
-    const ends = swung(tile.document);
-    if (ends) {
-      ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, ends });
-      continue;
-    }
-    if (!windy(tile.document)) continue;
-    const { width, height } = tile.document;
-    if (roped(tile.document)) {
-      ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null });
-      continue;
-    }
-    const amp = Math.min(Number(tile.document.flags[MODULE_ID].wind), 2);
-    trees.set(tile.id, { tile, phase: phaseOf(tile.id), size: Math.max(width, height), amp });
-  }
-  if ((trees.size || ropes.size) && !ticking) {
+  for (const tile of canvas.tiles.placeables) addWind(tile);
+}
+
+/**
+ * Отдать тайл ветру: ветроуказатель, гамак, верёвка с бельём, крона или куст. Тайл Foundry
+ * или меш Boundless под видом тайла (см. boundless.js) — нужны `id`, `mesh` и `document`.
+ */
+export function addWind(tile) {
+  const doc = tile.document;
+  if (trees.has(tile.id) || ropes.has(tile.id)) return;
+  const ends = swung(doc);
+  if (socked(doc)) ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, sock: true });
+  else if (ends) ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null, ends });
+  else if (!windy(doc)) return;
+  else if (roped(doc)) ropes.set(tile.id, { tile, phase: phaseOf(tile.id), filter: null });
+  else trees.set(tile.id, { tile, phase: phaseOf(tile.id), size: Math.max(doc.width, doc.height), amp: Math.min(Number(doc.flags[MODULE_ID].wind), 2) });
+  if (!ticking && canvas.app) {
     canvas.app.ticker.add(sway);
     ticking = true;
   }
+}
+
+/** Отпустить тайл: меш — на место, фильтр — прочь. */
+export function dropWind(id) {
+  const tree = trees.get(id);
+  if (tree) rest(tree.tile);
+  trees.delete(id);
+  const r = ropes.get(id);
+  if (r) untie(r);
+  ropes.delete(id);
+}
+
+export function windKeys() {
+  return [...trees.keys(), ...ropes.keys()];
 }
 
 /** Вернуть мешам их место из документа: ветер стих или модуль выключили. */
@@ -177,7 +188,11 @@ function ropeEnds(tile, ends) {
 
 function tie(r) {
   const mesh = r.tile.mesh;
-  if (r.filter) return;
+  if (r.filter) {
+    // Boundless переписывает фильтры своих мешей (размытие глубины) — вернуть свой.
+    if (!mesh.filters?.includes(r.filter)) mesh.filters = [...(mesh.filters ?? []), r.filter];
+    return;
+  }
   if (r.sock) {
     r.filter = new PIXI.Filter(undefined, SOCK_FRAG, { uA: new Float32Array(2), uB: new Float32Array(2), uAmp: 0, uTime: 0, uPhase: r.phase, uBias: 0 });
     r.filter.resolution = canvas.app.renderer.resolution;
@@ -247,6 +262,8 @@ function swayRope(r, t, force, dx, dy, gust, grid) {
 function rest(tile) {
   const mesh = tile.mesh;
   if (!mesh || mesh.destroyed) return;
+  // Меш Boundless уже отдан другому тайлу: его место ставит Boundless, перекос — наш.
+  if (tile.owns && !tile.owns()) return mesh.skew.set(0, 0);
   const s = tile.document.shape ?? tile.document;
   mesh.position.set(s.x, s.y);
   mesh.angle = s.rotation ?? tile.document.rotation;

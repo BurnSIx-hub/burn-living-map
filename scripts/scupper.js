@@ -41,13 +41,16 @@ function hash(n) {
   return s - Math.floor(s);
 }
 
-async function textures() {
-  if (tex) return tex;
+let loading = null;
+function textures() {
+  if (tex) return Promise.resolve(tex);
   const load = foundry.canvas?.loadTexture ?? globalThis.loadTexture;
-  const [stain, trough, jet, flow] = await Promise.all(["stain", "trough", "jet", "flow"].map((n) => load(`${ASSET}${n}.png${V}`)));
-  if (flow?.baseTexture) flow.baseTexture.wrapMode = PIXI.WRAP_MODES.REPEAT;
-  tex = { stain, trough, jet, flow };
-  return tex;
+  loading ??= Promise.all(["stain", "trough", "jet", "flow"].map((n) => load(`${ASSET}${n}.png${V}`))).then(([stain, trough, jet, flow]) => {
+    if (flow?.baseTexture) flow.baseTexture.wrapMode = PIXI.WRAP_MODES.REPEAT;
+    tex = { stain, trough, jet, flow };
+    return tex;
+  }).finally(() => { loading = null; });
+  return loading;
 }
 
 function scuppersOf(doc) {
@@ -80,7 +83,8 @@ function buildOne(tile, [x, y, rot], size, n) {
   root.addChild(stain, trough.box, trough.mask, jet.box, jet.mask, fx);
   const rt = PIXI.RenderTexture.create({ width: SIZE, height: SIZE });
   const Mesh = foundry.canvas?.primary?.PrimarySpriteMesh ?? globalThis.PrimarySpriteMesh;
-  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.scupper.${tile.id}.${n}`, object: tile });
+  // Дом Boundless — не тайл Foundry: объекта у меша нет.
+  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.scupper.${tile.id}.${n}`, object: tile.boundless ? null : tile });
   mesh.anchor.set(0.5, 0.5);
   mesh.position.set(x, y);
   mesh.rotation = ((rot || 0) * Math.PI) / 180;
@@ -124,21 +128,38 @@ export async function rebuildScuppers(fresh = false) {
   const level = rainLevel();
   const list = canvas.tiles.placeables.filter((t) => scuppersOf(t.document) && t.mesh && !t.mesh.destroyed);
   if (fresh) wet = level ? 1 : 0;
-  if (!list.length || (!level && wet <= 0)) { wet = 0; return; }
+  // Сухо — воды нет. Льёт, а тайлов нет — вода остаётся: дома Boundless придут позже.
+  if (!list.length || (!level && wet <= 0)) { if (!level) wet = 0; return; }
   await textures();
   if (my !== gen || !canvas.ready) return;
-  for (const tile of list) {
-    const f = scuppersOf(tile.document);
-    const size = Number(f.scupperSize) || canvas.grid.size;
-    const items = f.scuppers.filter((s) => Array.isArray(s) && s.length >= 2).map((s, i) => buildOne(tile, s, size, i));
-    roofs.set(tile.id, { tile, items });
-  }
+  for (const tile of list) place(tile);
+}
+
+function place(tile) {
+  const f = scuppersOf(tile.document);
+  const size = Number(f.scupperSize) || canvas.grid.size;
+  const items = f.scuppers.filter((s) => Array.isArray(s) && s.length >= 2).map((s, i) => buildOne(tile, s, size, i));
+  roofs.set(tile.id, { tile, items });
   canvas.primary.sortDirty = true;
   if (!ticking) {
     canvas.app.ticker.add(tick);
     ticking = true;
   }
 }
+
+/**
+ * Сливы дома Boundless (см. boundless.js): только под дождём или пока вода стекает.
+ * Слои воды ещё грузятся — дом возьмётся следующим кадром.
+ */
+export function addScuppers(tile) {
+  if (roofs.has(tile.id) || !scuppersOf(tile.document) || !tile.mesh || !canvas.ready || !canvas.primary || !on()) return;
+  if (!rainLevel() && wet <= 0) return;
+  if (!tex) return void textures();
+  place(tile);
+}
+
+export const dropScuppers = (id) => drop(id);
+export const scupperKeys = () => roofs.keys();
 
 /* ------------------------------ Кадр ------------------------------ */
 

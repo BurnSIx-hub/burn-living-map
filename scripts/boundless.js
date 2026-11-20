@@ -1,18 +1,53 @@
 // Boundless (SweetyHake): огромный мир Картографа одной сценой, кусками. Тайлы и крыши там —
-// меши самого Boundless, а не тайлы Foundry, и хуки тайлов их не видят. Каждый кадр
-// смотрим, что Boundless держит на холсте: кроны (`flags.burn-living-map.wind` у тайла)
-// качаем тем же ветром, над трубами домов (`chimneys` у дома) пускаем тот же дым. Вода,
-// болото и звуки мест — обычные области сцены, их оживляет main.js как всегда.
+// меши самого Boundless, а не тайлы Foundry, и хуки тайлов их не видят. Каждый кадр смотрим,
+// что Boundless держит на холсте, и отдаём эти меши тем же модулям, что оживляют тайлы:
+// под видом тайла — `{id, mesh, document}`, где `document` собран из записи манифеста
+// (середина, размер, поворот, высота, картинка, пометки `flags.burn-living-map`).
+//   тайлы (`activeVirtualTiles`): ветер (кроны, кусты, бельё, ветроуказатели, гамаки), листья
+//     и светлячки, парение, «на воде», краны и вагонетки, техника, тени от солнца, колонки;
+//   дома (`activeOverlays`, меш крыши): дым из труб и вода из сливов под дождём.
+// Вода, болото и звуки мест — обычные области сцены, их оживляет main.js как всегда.
+//
+// Boundless берёт меши из пула: ушедший тайл отдаёт свой меш другому. Поэтому отпускаем
+// раньше всех (высокий приоритет тикера), а «свой ли меш» — по имени, которое Boundless
+// даёт мешу при установке. Модуль может сам сбросить взятое (пересборка по хукам) —
+// тогда берём заново в следующем кадре.
 
-import { wind, swayCrown, phaseOf } from "./wind.js";
+import { addWind, dropWind, windKeys } from "./wind.js";
 import { addSmoke, dropSmoke, smokeKeys } from "./chimneys.js";
+import { addHover, dropHover, hoverKeys, hoverOf } from "./hover.js";
+import { addAfloat, dropAfloat, afloatKeys, afloatOf } from "./afloat.js";
+import { addMotion, dropMotion, motionKeys, slewOf, railOf } from "./motion.js";
+import { addMachine, dropMachine, machineKeys, machineOf } from "./machines.js";
+import { addShadow, dropShadow, shadowKeys, shadowOf } from "./shadows.js";
+import { addSpeaker, dropSpeaker, speakerKeys, stateOf } from "./speaker.js";
+import { addParticles, dropParticles, particleKeys } from "./particles.js";
+import { addScuppers, dropScuppers, scupperKeys } from "./scupper.js";
 
 const MODULE_ID = "burn-living-map";
-/** Ключи дыма над домами Boundless — чтобы не спутать с дымом тайлов. */
+/** Ключи взятого у Boundless — чтобы не спутать с тайлами Foundry. */
 const PREFIX = "boundless:";
 
-/** Меш кроны → его место без ветра. Boundless берёт меши из пула: место — по ключу тайла. */
-const rest = new WeakMap();
+const own = (doc) => doc.flags?.[MODULE_ID] ?? {};
+const list = (v) => Array.isArray(v) && v.length > 0;
+
+/** Кто что оживляет: `on` — тайлы или дома, `wants` — по документу под видом тайла. */
+const KINDS = [
+  { on: "tile", wants: (d) => Number(own(d).wind) > 0 || !!own(d).sock || list(own(d).swing), add: addWind, drop: dropWind, keys: windKeys },
+  { on: "tile", wants: (d) => !!own(d).particles, add: addParticles, drop: dropParticles, keys: particleKeys },
+  { on: "tile", wants: (d) => hoverOf(d) > 0, add: addHover, drop: dropHover, keys: hoverKeys },
+  { on: "tile", wants: (d) => afloatOf(d) > 0, add: addAfloat, drop: dropAfloat, keys: afloatKeys },
+  { on: "tile", wants: (d) => !!(slewOf(d) || railOf(d)), add: addMotion, drop: dropMotion, keys: motionKeys },
+  { on: "tile", wants: (d) => !!machineOf(d), add: addMachine, drop: dropMachine, keys: machineKeys },
+  { on: "tile", wants: (d) => shadowOf(d), add: addShadow, drop: dropShadow, keys: shadowKeys },
+  { on: "tile", wants: (d) => !!stateOf(d), add: addSpeaker, drop: dropSpeaker, keys: speakerKeys },
+  { on: "house", wants: (d) => list(own(d).chimneys), add: (t) => addSmoke(t.id, t, own(t.document).chimneys), drop: dropSmoke, keys: smokeKeys },
+  { on: "house", wants: (d) => list(own(d).scuppers), add: addScuppers, drop: dropScuppers, keys: scupperKeys }
+];
+for (const k of KINDS) k.mesh = new Map();
+
+/** Запись Boundless → тайл для модулей; разбор один на запись. */
+const known = new WeakMap();
 let ticking = false;
 
 /** Boundless ведёт эту сцену. */
@@ -21,41 +56,80 @@ function boundless() {
   return B?.active && canvas.scene?.flags?.boundless?.enabled ? B : null;
 }
 
+/** Меш ещё наш: Boundless ставит ему имя при установке и снимает, убирая в пул. */
+function owner(mesh) {
+  const name = mesh.name;
+  return () => !mesh.destroyed && mesh.name === name;
+}
+
+function asTile(key, vt) {
+  const s = vt.tSpec ?? {}, mesh = vt.mesh;
+  const w = Number(s.w) || 0, h = Number(s.h) || 0;
+  // Без якоря Boundless ставит меш серединой записи (x, y — левый верх).
+  const x = s.anchorX === undefined ? s.x + w / 2 : s.x + (0.5 - s.anchorX) * w;
+  const y = s.anchorY === undefined ? s.y + h / 2 : s.y + (0.5 - s.anchorY) * h;
+  const owns = owner(mesh);
+  return {
+    id: `${PREFIX}t:${key}`, mesh, boundless: true, owns,
+    get visible() { return owns(); },
+    document: {
+      x, y, width: w, height: h, rotation: Number(s.rot) || 0,
+      elevation: Number.isFinite(s.elevation) ? s.elevation : mesh.elevation,
+      texture: { src: s.src ?? "", anchorX: 0.5, anchorY: 0.5 },
+      flags: s.flags ?? {}
+    }
+  };
+}
+
+function asHouse(key, ov, B) {
+  const s = ov.ovSpec ?? {}, mesh = ov.roofMesh;
+  const owns = owner(mesh);
+  return {
+    id: `${PREFIX}o:${key}`, mesh, boundless: true, owns,
+    get visible() { return owns(); },
+    // Крыша открыта — у фишки, под мышью, по Alt: решает Boundless.
+    open: () => !!B._isRoofRevealed?.(mesh, canvas.masks?.occlusion?.occludedSurfaces),
+    document: { x: s.cx, y: s.cy, width: s.w, height: s.h, rotation: Number(s.rot) || 0, flags: s.flags ?? {} }
+  };
+}
+
+function classify(tile, on) {
+  return { tile, kinds: KINDS.filter((k) => k.on === on && k.wants(tile.document)) };
+}
+
 function tick() {
   const B = boundless();
   if (!B || !canvas.ready) return stop();
-  const on = game.settings.get(MODULE_ID, "enabled");
-  const { force, dx, dy } = wind();
-  const t = performance.now() / 1000;
-  const grid = canvas.grid.size;
-  // Порывы — те же, что у тайлов (wind.js).
-  const gust = 0.65 + 0.35 * Math.sin(t * 0.21) * Math.sin(t * 0.13 + 1.3);
+  // Что Boundless держит сейчас: id → тайл и кто его оживляет.
+  const want = new Map();
   for (const [key, vt] of B.activeVirtualTiles ?? []) {
-    const f = vt.tSpec?.flags?.[MODULE_ID];
-    const m = vt.mesh;
-    if (!m || m.destroyed || !(Number(f?.wind) > 0) || f.rope || f.sock || f.swing) continue;
-    let r = rest.get(m);
-    if (!r || r.key !== key) {
-      r = { key, x: m.position.x, y: m.position.y, rot: m.angle, phase: phaseOf(key) };
-      rest.set(m, r);
-    }
-    const size = Math.max(Number(vt.tSpec.w) || 0, Number(vt.tSpec.h) || 0);
-    swayCrown(m, r.x, r.y, r.rot, r.phase, size, Math.min(Number(f.wind), 2), t, on ? force : 0, dx, dy, gust, grid);
+    if (!vt?.mesh || vt.mesh.destroyed) continue;
+    let info = known.get(vt);
+    if (!info) known.set(vt, (info = classify(asTile(key, vt), "tile")));
+    if (info.kinds.length) want.set(info.tile.id, info);
   }
-  // Дым — над домами, что Boundless сейчас держит (крыша рядом с окном).
-  const want = new Set();
-  if (on) {
-    for (const [key, ov] of B.activeOverlays ?? []) {
-      const list = ov.ovSpec?.flags?.[MODULE_ID]?.chimneys;
-      const mesh = ov.roofMesh;
-      if (!Array.isArray(list) || !list.length || !mesh || mesh.destroyed) continue;
-      const id = PREFIX + key;
-      want.add(id);
-      addSmoke(id, { id, mesh, visible: true, open: () => !!B._isRoofRevealed?.(mesh, canvas.masks?.occlusion?.occludedSurfaces) }, list);
-    }
+  for (const [key, ov] of B.activeOverlays ?? []) {
+    if (!ov?.roofMesh || ov.roofMesh.destroyed) continue;
+    let info = known.get(ov);
+    if (!info || info.tile.mesh !== ov.roofMesh) known.set(ov, (info = classify(asHouse(key, ov, B), "house")));
+    if (info.kinds.length) want.set(info.tile.id, info);
   }
-  for (const id of smokeKeys()) {
-    if (id.startsWith(PREFIX) && !want.has(id)) dropSmoke(id);
+  for (const kind of KINDS) {
+    const have = new Set(kind.keys());
+    // Ушёл с холста или сменил меш — отпустить.
+    for (const id of have) {
+      if (!id.startsWith(PREFIX)) continue;
+      const w = want.get(id);
+      if (w && w.kinds.includes(kind) && kind.mesh.get(id) === w.tile.mesh) continue;
+      kind.drop(id);
+      have.delete(id);
+    }
+    for (const id of kind.mesh.keys()) if (!want.has(id)) kind.mesh.delete(id);
+    for (const [id, w] of want) {
+      if (have.has(id) || !w.kinds.includes(kind)) continue;
+      kind.add(w.tile);
+      kind.mesh.set(id, w.tile.mesh);
+    }
   }
 }
 
@@ -66,16 +140,24 @@ function start(tries = 30) {
     if (tries > 0 && canvas.scene?.flags?.boundless?.enabled) setTimeout(() => start(tries - 1), 1000);
     return;
   }
-  canvas.app.ticker.add(tick);
+  // Раньше модулей: меш, который Boundless отдал другому тайлу, отпускаем до их кадра.
+  canvas.app.ticker.add(tick, null, PIXI.UPDATE_PRIORITY.HIGH);
   ticking = true;
 }
 
 function stop() {
   if (ticking) canvas.app?.ticker.remove(tick);
   ticking = false;
-  for (const id of smokeKeys()) {
-    if (id.startsWith(PREFIX)) dropSmoke(id);
+  for (const kind of KINDS) {
+    for (const id of [...kind.keys()]) if (id.startsWith(PREFIX)) kind.drop(id);
+    kind.mesh.clear();
   }
+}
+
+/** Для проверки: сколько чего взято у Boundless. */
+export function boundlessStatus() {
+  const names = ["wind", "particles", "hover", "afloat", "motion", "machines", "shadows", "speakers", "chimneys", "scuppers"];
+  return Object.fromEntries(KINDS.map((k, i) => [names[i], [...k.keys()].filter((id) => id.startsWith(PREFIX)).length]));
 }
 
 export function registerBoundless() {

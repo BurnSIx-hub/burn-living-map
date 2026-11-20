@@ -84,7 +84,7 @@ function buildOne(tile, [x, y, size], n) {
   const rt = PIXI.RenderTexture.create({ width: SIZE, height: SIZE });
   const Mesh = foundry.canvas?.primary?.PrimarySpriteMesh ?? globalThis.PrimarySpriteMesh;
   // Крыша Boundless — не тайл Foundry: ядру её не отдаём.
-  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.chimney.${tile.id}.${n}`, object: tile.document ? tile : null });
+  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.chimney.${tile.id}.${n}`, object: tile.boundless ? null : tile });
   mesh.anchor.set(0.5, 0.5);
   mesh.position.set(x, y);
   mesh.scale.set((CELLS * grid) / SIZE);
