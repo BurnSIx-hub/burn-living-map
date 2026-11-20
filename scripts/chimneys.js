@@ -83,7 +83,8 @@ function buildOne(tile, [x, y, size], n) {
   }
   const rt = PIXI.RenderTexture.create({ width: SIZE, height: SIZE });
   const Mesh = foundry.canvas?.primary?.PrimarySpriteMesh ?? globalThis.PrimarySpriteMesh;
-  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.chimney.${tile.id}.${n}`, object: tile });
+  // Крыша Boundless — не тайл Foundry: ядру её не отдаём.
+  const mesh = new Mesh({ texture: rt, name: `${MODULE_ID}.chimney.${tile.id}.${n}`, object: tile.document ? tile : null });
   mesh.anchor.set(0.5, 0.5);
   mesh.position.set(x, y);
   mesh.scale.set((CELLS * grid) / SIZE);
@@ -155,7 +156,8 @@ function draw(it, tm, t, force, dx, dy, strength) {
     canvas.primary.sortDirty = true;
   }
   // Крыша открыта — дым тает до её прозрачности, закрылась — возвращается (~0,3 с).
-  const target = roofOpened(it.tile) ? tm.occludedAlpha : tm.unoccludedAlpha;
+  const open = it.tile.open ? it.tile.open() : roofOpened(it.tile);
+  const target = open ? tm.occludedAlpha : tm.unoccludedAlpha;
   const dt = it.last ? Math.min(0.1, t - it.last) : 1;
   it.last = t;
   it.fade += (target - it.fade) * Math.min(1, dt * 7);
@@ -183,6 +185,28 @@ function draw(it, tm, t, force, dx, dy, strength) {
     p.s.tint = (shade << 16) | (shade << 8) | (shade + 4 > 255 ? 255 : shade + 4);
   }
   canvas.app.renderer.render(it.root, { renderTexture: it.rt, clear: true });
+}
+
+/**
+ * Дым над крышей, что не тайл Foundry (дом Boundless): `roof` — `{id, mesh, open()}`,
+ * `list` — трубы `[x, y, size]` в точках сцены. Уже есть — ничего.
+ */
+export function addSmoke(key, roof, list) {
+  if (roofs.has(key) || !canvas.ready || !canvas.primary || !on()) return;
+  roofs.set(key, { tile: roof, items: list.map((c, i) => buildOne(roof, c, i)) });
+  canvas.primary.sortDirty = true;
+  if (!ticking) {
+    canvas.app.ticker.add(tick);
+    ticking = true;
+  }
+}
+
+export function dropSmoke(key) {
+  drop(key);
+}
+
+export function smokeKeys() {
+  return [...roofs.keys()];
 }
 
 /* ------------------------------ Хуки ------------------------------ */

@@ -83,7 +83,7 @@ export function wind() {
 }
 
 /** Своё зерно у каждого дерева, чтобы лес не качался строем. */
-function phaseOf(id) {
+export function phaseOf(id) {
   let h = 0;
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return (h % 10000) / 10000 * Math.PI * 2;
@@ -274,26 +274,33 @@ function sway() {
     const mesh = tile.mesh;
     if (!mesh || mesh.destroyed) continue;
     const s = tile.document.shape ?? tile.document;
-    const rot = s.rotation ?? tile.document.rotation;
-    if (!force) {
-      mesh.position.set(s.x, s.y);
-      mesh.angle = rot;
-      mesh.skew.set(0, 0);
-      continue;
-    }
-    // Большое дерево качается медленнее и меньше, мелкое — живее.
-    const big = Math.sqrt(size / (grid * 4));
-    const k = (force * amp) / Math.max(big, 0.6);
-    // Порыв пробегает по лесу: дальние деревья ловят его позже.
-    const lag = (s.x * dx + s.y * dy) / (grid * 12);
-    const w = Math.sin(t * 1.15 / big - lag + phase) + 0.35 * Math.sin(t * 2.9 - lag * 1.7 + phase * 1.9);
-    const reach = grid * 0.06 * k * gust;
-    mesh.position.set(s.x + dx * w * reach, s.y + dy * w * reach);
-    mesh.angle = rot + w * 0.9 * k * gust;
-    // Листва: мелкая дрожь перекосом, быстрее основного качания.
-    const flutter = Math.sin(t * 5.3 + phase * 3.1) * 0.5 + Math.sin(t * 7.7 + phase) * 0.5;
-    mesh.skew.set(0.012 * k * (w * 0.6 + flutter * 0.4) * dy, 0.012 * k * (w * 0.6 + flutter * 0.4) * dx);
+    swayCrown(mesh, s.x, s.y, s.rotation ?? tile.document.rotation, phase, size, amp, t, force, dx, dy, gust, grid);
   }
+}
+
+/**
+ * Качнуть меш кроны: (x, y, rot) — его место без ветра. Общее для тайлов Foundry и
+ * мешей Boundless (см. boundless.js).
+ */
+export function swayCrown(mesh, x, y, rot, phase, size, amp, t, force, dx, dy, gust, grid) {
+  if (!force) {
+    mesh.position.set(x, y);
+    mesh.angle = rot;
+    mesh.skew.set(0, 0);
+    return;
+  }
+  // Большое дерево качается медленнее и меньше, мелкое — живее.
+  const big = Math.sqrt(size / (grid * 4));
+  const k = (force * amp) / Math.max(big, 0.6);
+  // Порыв пробегает по лесу: дальние деревья ловят его позже.
+  const lag = (x * dx + y * dy) / (grid * 12);
+  const w = Math.sin(t * 1.15 / big - lag + phase) + 0.35 * Math.sin(t * 2.9 - lag * 1.7 + phase * 1.9);
+  const reach = grid * 0.06 * k * gust;
+  mesh.position.set(x + dx * w * reach, y + dy * w * reach);
+  mesh.angle = rot + w * 0.9 * k * gust;
+  // Листва: мелкая дрожь перекосом, быстрее основного качания.
+  const flutter = Math.sin(t * 5.3 + phase * 3.1) * 0.5 + Math.sin(t * 7.7 + phase) * 0.5;
+  mesh.skew.set(0.012 * k * (w * 0.6 + flutter * 0.4) * dy, 0.012 * k * (w * 0.6 + flutter * 0.4) * dx);
 }
 
 export function registerWind() {

@@ -16,6 +16,7 @@ import { registerMotion, rebuildMotion, motionStatus } from "./motion.js";
 import { registerSpeakers, rebuildSpeakers, speakerSource } from "./speaker.js";
 import { registerScuppers, rebuildScuppers } from "./scupper.js";
 import { registerChimneys, rebuildChimneys } from "./chimneys.js";
+import { registerBoundless } from "./boundless.js";
 import { RIFT, riftUniforms, openness, riftApi } from "./rift.js";
 import { takeSettings, openPanel, WildCanvasPanel } from "./panel.js";
 
@@ -105,6 +106,8 @@ Hooks.once("init", () => {
   registerScuppers();
   // Дым из труб на крышах: клубы по ветру, гаснут вместе с крышей (см. chimneys.js).
   registerChimneys();
+  // Мир Boundless: его кроны и дома — свои меши, не тайлы (см. boundless.js).
+  registerBoundless();
   for (const hook of ["createTile", "updateTile", "deleteTile"]) {
     Hooks.on(hook, (doc) => { if (doc.parent === canvas.scene && (heatOf(doc) > 0 || hook !== "createTile")) setTimeout(() => rebuildAmbience(), 0); });
   }
