@@ -12,6 +12,12 @@
 // раньше всех (высокий приоритет тикера), а «свой ли меш» — по имени, которое Boundless
 // даёт мешу при установке. Модуль может сам сбросить взятое (пересборка по хукам) —
 // тогда берём заново в следующем кадре.
+//
+// Отражать тайлы Boundless не умеет. Отражённое Картограф кладёт своей картинкой, а
+// механизм, ветроуказатель и колонку (их рисуют по раскладке картинки) — с `scaleX` −1 в
+// записи: такой меш отражаем сами, как ядро отражает тайл, и модули видят обычный
+// отражённый тайл. Ширину меша Boundless ставит со знаком, поэтому, уходя в пул, меш
+// получает прямой вид обратно — иначе отразился бы следующий тайл на нём.
 
 import { addWind, dropWind, windKeys } from "./wind.js";
 import { addSmoke, dropSmoke, smokeKeys } from "./chimneys.js";
@@ -62,6 +68,34 @@ function owner(mesh) {
   return () => !mesh.destroyed && mesh.name === name;
 }
 
+/** Отражённые нами меши → имя, под которым отражали. */
+const mirrored = new Map();
+const GUARD = Symbol.for(`${MODULE_ID}.mirror`);
+
+function mirror(vt) {
+  if (!(Number(vt.tSpec?.scaleX) < 0)) return;
+  const mesh = vt.mesh;
+  if (mesh.scale.x > 0) mesh.scale.x = -mesh.scale.x;
+  mirrored.set(mesh, mesh.name);
+}
+
+function unmirror(mesh) {
+  if (!mesh.destroyed && mesh.scale.x < 0) mesh.scale.x = -mesh.scale.x;
+  mirrored.delete(mesh);
+}
+
+/** Меш уходит в пул — сразу прямым: следующий тайл на нём Boundless ставит в том же шаге. */
+function guardPool(B) {
+  const retire = B.retireMesh;
+  if (typeof retire !== "function" || retire[GUARD]) return;
+  const guarded = function (m) {
+    if (m && mirrored.has(m)) unmirror(m);
+    return retire.call(this, m);
+  };
+  guarded[GUARD] = true;
+  B.retireMesh = guarded;
+}
+
 function asTile(key, vt) {
   const s = vt.tSpec ?? {}, mesh = vt.mesh;
   const w = Number(s.w) || 0, h = Number(s.h) || 0;
@@ -75,7 +109,7 @@ function asTile(key, vt) {
     document: {
       x, y, width: w, height: h, rotation: Number(s.rot) || 0,
       elevation: Number.isFinite(s.elevation) ? s.elevation : mesh.elevation,
-      texture: { src: s.src ?? "", anchorX: 0.5, anchorY: 0.5 },
+      texture: { src: s.src ?? "", anchorX: 0.5, anchorY: 0.5, scaleX: Number(s.scaleX) < 0 ? -1 : 1 },
       flags: s.flags ?? {}
     }
   };
@@ -100,10 +134,14 @@ function classify(tile, on) {
 function tick() {
   const B = boundless();
   if (!B || !canvas.ready) return stop();
+  guardPool(B);
+  // Меш ушёл к другому мимо пула — вернуть прямой вид.
+  for (const [mesh, name] of mirrored) if (mesh.destroyed || mesh.name !== name) unmirror(mesh);
   // Что Boundless держит сейчас: id → тайл и кто его оживляет.
   const want = new Map();
   for (const [key, vt] of B.activeVirtualTiles ?? []) {
     if (!vt?.mesh || vt.mesh.destroyed) continue;
+    mirror(vt);
     let info = known.get(vt);
     if (!info) known.set(vt, (info = classify(asTile(key, vt), "tile")));
     if (info.kinds.length) want.set(info.tile.id, info);
@@ -152,12 +190,15 @@ function stop() {
     for (const id of [...kind.keys()]) if (id.startsWith(PREFIX)) kind.drop(id);
     kind.mesh.clear();
   }
+  for (const mesh of [...mirrored.keys()]) unmirror(mesh);
 }
 
 /** Для проверки: сколько чего взято у Boundless. */
 export function boundlessStatus() {
   const names = ["wind", "particles", "hover", "afloat", "motion", "machines", "shadows", "speakers", "chimneys", "scuppers"];
-  return Object.fromEntries(KINDS.map((k, i) => [names[i], [...k.keys()].filter((id) => id.startsWith(PREFIX)).length]));
+  const out = Object.fromEntries(KINDS.map((k, i) => [names[i], [...k.keys()].filter((id) => id.startsWith(PREFIX)).length]));
+  out.mirrored = mirrored.size;
+  return out;
 }
 
 export function registerBoundless() {

@@ -417,8 +417,8 @@ function drawSlew(m, mesh, t) {
   const ang = arc * k;
   const tex = mesh.texture;
   const W = (tex.orig?.width ?? tex.width) * Math.abs(mesh.scale.x), H = (tex.orig?.height ?? tex.height) * Math.abs(mesh.scale.y);
-  // От оси к точке якоря меша, в осях картинки.
-  const vx = (mesh.anchor.x - ax) * W, vy = (mesh.anchor.y - ay) * H;
+  // От оси к точке якоря меша, в осях картинки; у отражённого меша ось — на отражённой картинке.
+  const vx = (mesh.anchor.x - ax) * W * (Math.sign(mesh.scale.x) || 1), vy = (mesh.anchor.y - ay) * H * (Math.sign(mesh.scale.y) || 1);
   const rot = (r, x, y) => [x * Math.cos(r) - y * Math.sin(r), x * Math.sin(r) + y * Math.cos(r)];
   const [bx, by] = rot(b.r, vx, vy);
   const px = b.x - bx, py = b.y - by;

@@ -167,8 +167,11 @@ function ropeEnds(tile, ends) {
     const d = tile.document;
     const rad = ((s.rotation ?? d.rotation) * Math.PI) / 180;
     const [c, sn] = [Math.cos(rad), Math.sin(rad)];
+    // Отражённый меш (тайл Foundry или меш Boundless, см. boundless.js): концы — точки
+    // картинки, и они отражаются вместе с ней.
+    const sx = Math.sign(tile.mesh.scale.x) || 1, sy = Math.sign(tile.mesh.scale.y) || 1;
     const at = (fx, fy) => {
-      const x = fx * d.width, y = fy * d.height;
+      const x = fx * sx * d.width, y = fy * sy * d.height;
       return { x: s.x + x * c - y * sn, y: s.y + x * sn + y * c };
     };
     const A = at(ends[0], ends[1]), B = at(ends[2], ends[3]);
