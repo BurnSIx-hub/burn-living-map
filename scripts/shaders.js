@@ -411,12 +411,22 @@ void main() {
   gl_FragColor = vec4(vec3(0.82, 0.85, 0.88) * a, a) * uStrength * m * keep();
 }`;
 
-// Водопад: струи бегут по направлению uFlow (градусы, 90 — вниз по экрану).
-// Внизу, где вода кончается, — пена, а за край ползут клубы водяной пыли;
-// поэтому меш с полями, и в полях рисуется только пыль. Наверху — гладкий
-// тёмный перелив: вода переваливает через кромку.
+// Водопад сверху, как его рисуют на картах: плотная белая вспененная струя с рваными
+// краями, внизу клубятся пена и водяная пыль. Течение — uFlow (градусы, 90 — вниз по
+// экрану); uFall — где вдоль течения кромка и низ области, в клетках (см. fallUniforms).
+// У кромки вода ещё гладкая и тёмная, со светлым бликом переката, и с падением белеет.
+// Струи разгоняются: путь воды растёт как t², поэтому узор бежит по корню из пути —
+// у кромки медленно, внизу быстро и вытянуто. Перед кромкой — гладкий язык с нитями,
+// бегущими к ней. «Брызги» (uSpray) — во что вода падает: от 1 — в воду, внизу бурлит
+// пена и стоит облако пыли; ближе к 0 — в пропасть: струя темнеет и тает, пыли мало.
+// Меш с полями: пена, пыль и язык перед кромкой рисуются и за контуром.
 const WATERFALL = COMMON + `
+uniform vec2 uFall;
 float maskAt(vec2 q) { return texture2D(uMask, (q * uGrid - uBounds.xy) / uBounds.zw).r; }
+// Падающая вода на линии течения через q — с боков тоже, послабее.
+float wide(vec2 q, vec2 side, float r) {
+  return max(maskAt(q), max(maskAt(q + side * r), maskAt(q - side * r)) * 0.75);
+}
 void main() {
   vec2 p = vPos / uGrid;
   float t = uTime * uSpeed;
@@ -424,41 +434,104 @@ void main() {
   vec2 dir = vec2(cos(rad), sin(rad));
   vec2 side = vec2(-dir.y, dir.x);
   float a = dot(p, dir), b = dot(p, side);
+  float len = max(uFall.y - uFall.x, 0.5);
+  float up = a - uFall.x;
+  float below = a - uFall.y;
+  float f = clamp(up / len, 0.0, 1.0);
   float m = mask();
-  // Сколько воды выше по течению: пыль клубится там, куда вода упала.
-  float up = max(maskAt(p - dir * 0.5) * 0.9, max(maskAt(p - dir * 1.1) * 0.65, maskAt(p - dir * 1.8) * 0.35));
-  float ahead = maskAt(p + dir * 0.45);
-  float behind = maskAt(p - dir * 0.45);
-  if (m < 0.01 && up < 0.02) discard;
+  float lipHere = maskAt(p - dir * (up - 0.35));
+  vec2 fp = p - dir * (below + 0.35);
+  float foot = wide(fp, side, 0.6);
+  float footWide = max(foot, wide(fp, side, 1.3) * 0.7);
+  float footMist = max(footWide, wide(fp, side, 2.1) * 0.5);
+  if (m < 0.01 && footMist < 0.02 && (up > 0.0 || lipHere < 0.05)) discard;
+  float pool = clamp(uSpray, 0.0, 1.0);
+  float dens = clamp(0.35 + 0.65 * uStreaks, 0.0, 1.0);
   vec4 o = vec4(0.0);
-  float body = smoothstep(0.15, 0.5, m);
-  // Струи: шум, вытянутый вдоль течения и бегущий по нему; две скорости.
-  float s1 = noise(vec2(b * 7.0, a * 0.55 - t * 2.6));
-  float s2 = noise(vec2(b * 15.0 + 3.1, a * 1.1 - t * 4.1));
-  float streak = smoothstep(0.55, 0.95, s1 * 0.6 + s2 * 0.55);
-  float gap = smoothstep(0.45, 0.15, s1);
-  o = over(o, vec3(0.0, 0.03, 0.06), gap * 0.22 * body * uStreaks);
-  o.rgb += vec3(0.85, 0.95, 1.0) * streak * 0.42 * body * uStreaks;
-  // Верхняя кромка: впереди вода есть, позади нет — гладкий светлый перелив.
-  float lip = smoothstep(0.25, 0.6, ahead - behind) * body;
-  o = over(o, vec3(0.75, 0.88, 0.95), lip * 0.25 * (0.7 + 0.3 * sin(b * 3.0 + t * 1.3)));
-  // Низ: позади вода, впереди уже нет — бурлит пена.
-  // Пена шире полосы края маски: смотрим на клетку назад и полклетки вперёд.
-  float foot = clamp((maskAt(p - dir * 0.9) - maskAt(p + dir * 0.35)) * 1.8, 0.0, 1.0) * smoothstep(0.02, 0.3, m + up * 0.5);
-  float churn = fbm(vec2(b * 2.2, a * 2.2 - t * 1.7)) * 0.6 + fbm(p * 4.5 + vec2(t * 0.9, -t * 1.4)) * 0.5;
-  float foam = foot * smoothstep(0.36, 0.7, churn);
-  o = over(o, vec3(0.94, 0.97, 1.0), clamp(foam * 0.95 * uSpray, 0.0, 1.0));
-  // Водяная пыль за краем: мягкие клубы расходятся вниз и в стороны и тают.
-  float beyond = clamp(up - m * 0.6, 0.0, 1.0);
-  float puff = fbm(vec2(b * 1.4 + sin(t * 0.3) * 0.3, a * 1.4 - t * 0.8)) * 0.7 + fbm(p * 3.0 - dir * t * 0.6) * 0.4;
-  float mist = beyond * smoothstep(0.3, 0.75, puff);
-  o = over(o, vec3(0.9, 0.95, 1.0), clamp(mist * 0.65 * uSpray, 0.0, 0.75));
-  // Брызги: мелкие яркие капли мелькают у подножия.
-  vec2 cell = floor(p * 5.0);
-  float h = hash(cell + floor(t * 3.0));
-  vec2 c = (cell + vec2(hash(cell + 1.7), hash(cell + 4.3))) / 5.0;
-  float drop = smoothstep(0.05, 0.0, length(p - c)) * step(0.8, h) * max(foot, beyond * 0.6);
-  o.rgb += vec3(1.0) * drop * 0.5 * uSpray;
+
+  // Перед кромкой: вода разгоняется — гладкий тёмный язык, нити бегут к кромке.
+  if (up < 0.0) {
+    float ap = -up;
+    float appr = smoothstep(1.4, 0.15, ap) * smoothstep(0.15, 0.6, lipHere);
+    float w = 1.0 / (ap + 0.6);
+    float ln = noise(vec2(b * 16.0, w * 2.4 - t * 1.4)) * 0.7 + noise(vec2(b * 31.0, w * 4.0 - t * 2.2)) * 0.3;
+    o = over(o, vec3(0.03, 0.08, 0.12), appr * 0.2);
+    o.rgb += vec3(0.72, 0.86, 0.95) * smoothstep(0.66, 0.86, ln) * appr * appr * 0.22 * dens;
+  }
+
+  // Струя: крупные жгуты и комья, пряди, волоски — бегут с разгоном.
+  float fall = max(up, 0.0);
+  float u = sqrt(fall + 0.3);
+  float v = u * 3.6 - t * 4.5;
+  float bb = b + 0.06 * sin(u * 4.5 - t * 2.4 + b * 1.3);
+  float c1 = fbm(vec2(bb * 3.2, v * 0.22));
+  float c2 = noise(vec2(bb * 9.0, v * 0.6 + 5.0));
+  float c3 = noise(vec2(bb * 24.0, v * 1.2 + 11.0));
+  // Тонкие чёткие нити: гребни шума, а не сам шум (он мягкий и мылит струи).
+  float thread = 1.0 - abs(noise(vec2(bb * 13.0, v * 0.7 + 21.0)) * 2.0 - 1.0);
+  thread = thread * thread * thread * thread;
+  float streaks = clamp((c1 - 0.5) * 2.2 + (c2 - 0.5) * 0.8 + (c3 - 0.5) * 0.4 + thread * 0.35 + 0.42, 0.0, 1.0);
+  // Ниже вода рвётся в пену: пушистые клубки вместо струй.
+  float froth = fbm(vec2(bb * 2.6, v * 1.1 + 2.0)) * 0.7 + noise(vec2(bb * 7.0, v * 2.6 + 4.0)) * 0.3;
+  float tex = mix(streaks, clamp((froth - 0.5) * 2.4 + 0.5, 0.0, 1.0), smoothstep(0.1, 0.85, f) * 0.65);
+  // Комья вспененной воды: светлые сгустки летят вниз со струёй.
+  float clump = smoothstep(0.5, 0.8, noise(vec2(bb * 1.3, v * 0.9 + 7.0)));
+  // В пропасть: к низу вода темнеет, рассыпается на пряди и тает в дымке.
+  float sink = smoothstep(0.35, 0.95, f) * (1.0 - pool);
+  // Рваный край — пряди бегут вниз со струёй; чем ниже, тем рванее.
+  float rag = noise(vec2(bb * 3.0, v * 1.1 + 3.0)) * 0.65 + noise(vec2(bb * 8.0, v * 2.3 + 9.0)) * 0.35 - 0.5;
+  // Кромка неровная: где вода переваливает раньше, где позже.
+  float lipN = noise(vec2(b * 3.0, t * 0.4));
+  float sheet = smoothstep(0.42, 0.62, m + rag * (0.8 + 0.5 * f) - sink * 0.25) * smoothstep(-0.15, 0.05, up - (lipN - 0.5) * 0.25);
+  // У краёв вода тоньше и прозрачнее.
+  sheet *= 0.55 + 0.45 * smoothstep(0.55, 0.95, m + rag * 0.3);
+  float aer = smoothstep(0.05, 0.9, fall);
+  vec3 glass = vec3(0.14, 0.26, 0.34) + vec3(0.3, 0.38, 0.42) * smoothstep(0.55, 0.9, c2);
+  vec3 white = mix(vec3(0.6, 0.7, 0.78), vec3(0.96, 0.98, 1.0), clamp(smoothstep(0.25, 0.85, tex) + clump * 0.2, 0.0, 1.0));
+  vec3 col = mix(glass, white, aer);
+  float alpha = sheet * dens * mix(0.7, 1.0, aer) * mix(0.75, 0.99, clamp(smoothstep(0.15, 0.65, tex) + clump * 0.3, 0.0, 1.0));
+  col *= 1.0 - 0.45 * sink;
+  alpha *= (1.0 - sink) * sqrt(1.0 - sink);
+  o = over(o, col, alpha);
+  // Дымка вокруг низа струи: вода рассыпается в пыль.
+  float around = max(m, max(maskAt(p + side * 0.7), maskAt(p - side * 0.7)) * 0.6);
+  float hz = around * smoothstep(0.25, 1.0, f) * step(0.0, up) * (0.55 + 0.45 * fbm(vec2(b * 1.2, a * 0.8 - t * 0.5)));
+  o = over(o, vec3(0.82, 0.89, 0.95), hz * 0.15 * (0.4 + 0.6 * uSpray));
+  // Перекат через кромку: светлая полоса, слегка дышит.
+  // Блик переката идёт по той же неровной кромке и дышит.
+  float lx = (up - 0.08 - (lipN - 0.5) * 0.25) / 0.08;
+  float lip = exp(-lx * lx) * smoothstep(0.3, 0.6, m);
+  o.rgb += vec3(0.7, 0.85, 0.95) * lip * 0.45 * (0.45 + 0.55 * noise(vec2(b * 7.0, t * 0.9 + 3.0)));
+
+  // Низ: бурлит пена, расходится от места падения. В пропасти пены нет.
+  float churnK = smoothstep(0.3, 1.0, uSpray);
+  if (churnK > 0.0) {
+    vec2 q = vec2(b, below) * 1.9;
+    vec2 warp = vec2(fbm(q + vec2(t * 0.3, -t * 0.5)), fbm(q + vec2(5.2, 1.3) - vec2(t * 0.25, t * 0.45)));
+    float boil = fbm(q * 1.3 + warp * 1.7 - vec2(0.0, t * 0.6));
+    // Кипень там, где струя бьёт в воду, а ниже — кружево пены уплывает по течению.
+    float zc = smoothstep(-0.6, -0.1, below) * smoothstep(0.55, 0.0, below);
+    float zl = smoothstep(-0.2, 0.3, below) * smoothstep(1.8, 0.4, below);
+    float core = zc * foot * smoothstep(0.36, 0.58, boil + 0.08);
+    // Вширь пена не уходит дальше струи: по бокам может быть сухой берег.
+    float lace = zl * foot * smoothstep(0.075, 0.02, abs(boil - 0.53 + below * 0.03));
+    o = over(o, vec3(0.93, 0.97, 1.0), clamp((core * 0.9 + lace * 0.6) * churnK, 0.0, 0.92));
+  }
+  // Водяная пыль: мягкие клубы у места падения, расходятся и тают.
+  float zm = smoothstep(-1.3, -0.1, below) * smoothstep(2.5, 0.3, below);
+  vec2 mq = vec2(b, below) * 0.8;
+  float puff = fbm(mq + vec2(sin(t * 0.17) * 0.5, -t * 0.18)) * 0.65 + fbm(mq * 2.1 + vec2(t * 0.11, t * 0.21)) * 0.35;
+  // В пропасти пыли не видно: светлая только там, где вода обо что-то бьётся.
+  float mist = zm * footMist * smoothstep(0.3, 0.9, puff) * smoothstep(0.25, 1.0, uSpray);
+  o = over(o, vec3(0.86, 0.92, 0.97), clamp(mist * 0.45 * uSpray, 0.0, 0.55));
+  // Брызги: редкие капли летят по течению у краёв струи и у низа.
+  vec2 dc = vec2(b * 4.0, (a - t * 3.0) * 2.5);
+  vec2 cell = floor(dc);
+  vec2 cp = cell + vec2(hash(cell + 1.7), hash(cell + 4.3));
+  float drop = smoothstep(0.2, 0.0, length((dc - cp) * vec2(1.0, 0.5))) * step(0.93, hash(cell));
+  float edge = smoothstep(0.15, 0.35, m) * smoothstep(0.75, 0.45, m) * smoothstep(0.0, 0.5, fall) * (1.0 - sink);
+  float zone = max(edge, footWide * churnK * smoothstep(-0.8, 0.0, below) * smoothstep(1.0, 0.0, below));
+  o.rgb += vec3(0.9, 0.95, 1.0) * drop * zone * 0.45 * dens;
   gl_FragColor = o * uStrength * keep();
 }`;
 

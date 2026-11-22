@@ -267,7 +267,25 @@ function looksOf(region) {
   looks.uStrength = preview.world.strength ?? game.settings.get(MODULE_ID, "strength");
   // Вид рыбы «без рыбы» (последний в списке) гасит рыб, сколько бы их ни было.
   if (looks.uFishKind === 3) looks.uFish = 0;
+  if (effectOf(region) === "waterfall") Object.assign(looks, fallUniforms(region, looks.uFlow));
   return looks;
+}
+
+/**
+ * Водопад: где вдоль течения кромка и низ области, в клетках. От них шейдер меряет, сколько
+ * вода уже пролетела. Зависит от направления, поэтому считается вместе с ползунками.
+ */
+function fallUniforms(region, flow) {
+  const grid = canvas.grid.size;
+  const rad = (Number(flow) || 0) * Math.PI / 180, dx = Math.cos(rad), dy = Math.sin(rad);
+  const v = region.triangulation?.vertices ?? [];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < v.length; i += 2) {
+    const a = (v[i] * dx + v[i + 1] * dy) / grid;
+    if (a < lo) lo = a;
+    if (a > hi) hi = a;
+  }
+  return { uFall: new Float32Array(Number.isFinite(lo) ? [lo, hi] : [0, 1]) };
 }
 
 /** Переложить ползунки в работающие шейдеры: без пересборки, можно хоть каждый кадр. */
