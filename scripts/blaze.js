@@ -92,35 +92,29 @@ float fbm3(vec3 p) {
 }
 const float PI2 = 6.2831853;
 float hash1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
-// Один очаг сверху, как у огня области (shaders.js, flameAt): шесть языков-
-// лепестков от середины, широкие у основания, к кончикам сужаются; длина дрожит,
-// угол качается, край рвёт шум turb, дальнее сносит ветром uWindDir.
+// Один очаг сверху, как у огня области (shaders.js, flameAt): языки разной длины по
+// кругу (шум по окружности, без симметрии), клубятся и дрожат, край рвёт шум turb,
+// дальнее сносит ветром uWindDir.
 // hot — жар середины: у костра выше языков, у очагов пожара ниже, чтобы
 // они не горели одинаковыми звёздочками.
 float flameAt(vec2 p, vec2 c, float size, float seed, float t, vec3 turb, float hot) {
   vec2 rel = (p - c) / size;
   rel -= uWindDir * 0.3 * length(rel);
   float r = length(rel);
-  if (r > 1.3) return 0.0;
-  float ang = atan(rel.y, rel.x) + (turb.x - 0.5) * 1.0 * r + (turb.y - 0.5) * 0.35 * r;
-  float rr = r * (0.84 + 0.3 * turb.z + 0.12 * (turb.y - 0.5));
-  float petals = 0.0;
-  for (int i = 0; i < 6; i++) {
-    float fi = float(i);
-    float hi = hash1(seed * 7.13 + fi * 3.71);
-    float a = (fi + 0.6 * hi) / 6.0 * PI2 + 0.35 * sin(t * (0.7 + 0.6 * hi) + hi * 6.2) + 0.7 * rr * (hi - 0.5);
-    float len = 0.6 + 0.2 * (sin(t * (1.9 + 1.3 * hi) + hi * 20.0) + sin(t * (3.7 + 2.1 * hi) + seed + fi)) * 0.5 + 0.2;
-    float dd = abs(mod(ang - a + PI2 * 0.5, PI2) - PI2 * 0.5);
-    float x = clamp(rr / len, 0.0, 1.0);
-    float wid = 0.66 * pow(1.0 - x, 0.65);
-    // Край языка мягкий: очаги вливаются в общее пламя, а не лежат узором.
-    float body = (1.0 - smoothstep(wid * 0.3, wid + 0.08, dd)) * smoothstep(len, len * 0.85, rr);
-    petals = max(petals, body * (1.0 - x));
-  }
-  float core = 1.0 - smoothstep(0.0, 0.42, rr);
-  vec2 dir = rel / max(r, 0.25);
-  float streak = noise3(vec3(dir * 5.0 + seed, rr * 1.8 - t * 3.2));
-  return max(petals, core * hot) * (0.72 + 0.5 * streak);
+  if (r > 1.45) return 0.0;
+  vec2 dir = rel / max(r, 0.001);
+  float ang = atan(rel.y, rel.x) + (turb.x - 0.5) * 0.9 * r;
+  vec2 cs = vec2(cos(ang), sin(ang));
+  float lobes = noise3(vec3(cs * 2.0 + seed, t * 1.8)) * 0.55 + noise3(vec3(cs * 5.0 + seed * 1.7, t * 3.6)) * 0.45;
+  lobes = smoothstep(0.25, 0.8, lobes);
+  float len = 0.32 + 0.62 * lobes;
+  float flow = noise3(vec3(rel * 2.6 + seed, t * 2.8)) * 0.6 + noise3(vec3(rel * 6.0 - seed, t * 4.5)) * 0.4;
+  float rr = r * (0.88 + 0.24 * (turb.z - 0.5)) / len;
+  float body = clamp(1.0 - rr, 0.0, 1.0);
+  body = pow(body, 0.9) * (0.65 + 0.7 * flow);
+  body *= smoothstep(0.0, 0.22, body + (turb.y - 0.5) * 0.28);
+  float core = (1.0 - smoothstep(0.0, 0.38, r)) * hot * 0.8;
+  return clamp(max(body, core * (0.75 + 0.35 * flow)), 0.0, 1.2);
 }
 void main() {
   // Попиксельно: прозрачное и тень — мимо.
@@ -136,14 +130,17 @@ void main() {
   // Угли: тлеют пятнами и дышат.
   float coal = fbm(p * 4.0 + vec2(0.0, t * 0.2) + uSeed);
   o.rgb += vec3(1.0, 0.3, 0.05) * f0 * smoothstep(0.5, 0.75, coal) * (0.5 + 0.5 * sin(t * 2.0 + coal * 9.0)) * (0.35 + 0.4 * uHeat);
-  // Огонь сверху: тело по горящим пятнам и сетка очагов, языки которых
-  // расходятся от каждого во все стороны. Тлеет — очаги мелкие и тусклые,
-  // пылает — крупные, тело сплошное.
+  // Огонь сверху: клубящееся тело по горящим пятнам и очаг в середине тайла.
+  // Тлеет — тело тусклое и рваное, пылает — сплошное.
   vec3 turb = vec3(noise3(vec3(p * 2.6 + uSeed, t * 1.6)), noise3(vec3(p * 9.5, t * 4.0)), noise3(vec3(p * 4.8 + 7.0, t * 2.8)));
-  float edge = (noise3(vec3(p * 3.0, t * 1.1)) - 0.5) * 0.35;
-  float churn = fbm3(vec3(p * 1.6 + uSeed, t * 0.9));
-  float body = smoothstep(0.35, 0.95, f0 + edge) * (0.25 + 0.75 * smoothstep(0.25, 0.75, churn)) * (0.85 + 0.3 * noise3(vec3(p * 6.0, t * 3.0)));
-  float raw = body * 0.72 * smoothstep(0.3, 0.9, uHeat);
+  // Сплошное клубящееся пламя по горящему, без сетки очагов (она давала россыпь
+  // звёздочек): два слоя кипящего шума, светлые сгустки и тёмные провалы.
+  float edge = (noise3(vec3(p * 2.2, t * 1.3)) - 0.5) * 0.45 + (noise3(vec3(p * 5.0, t * 3.2)) - 0.5) * 0.4;
+  float n1 = fbm3(vec3(p * 1.3 + uSeed, t * 0.8));
+  float n2 = fbm3(vec3(p * 3.1 + 5.0, t * 1.9));
+  float boil = smoothstep(0.4, 0.82, n1 * 0.7 + n2 * 0.5);
+  float body = smoothstep(0.3, 0.8, f0 + edge) * (0.06 + 0.8 * boil) * (0.8 + 0.3 * turb.z);
+  float raw = body * smoothstep(0.3, 0.9, uHeat);
   // Очаг в середине тайла: у кроны или куста в клетку сетка очагов может
   // промахнуться, а гореть должно всегда.
   vec2 mid = (uRect.xy + uRect.zw * 0.5) / uCell;
@@ -152,20 +149,6 @@ void main() {
   if (fm > 0.1) {
     float size = clamp(min(cells.x, cells.y) * 0.45, 0.4, 1.2) * (0.45 + 0.55 * uHeat);
     raw = max(raw, flameAt(p, mid, size, uSeed * 3.3, t, turb, 0.95) * mix(0.6, 0.95, fm) * (0.55 + 0.45 * uHeat));
-  }
-  float S = 0.9;
-  vec2 ip = floor(p / S);
-  for (int y = -1; y <= 1; y++) {
-    for (int x = -1; x <= 1; x++) {
-      vec2 cell = ip + vec2(float(x), float(y));
-      vec2 jit = vec2(hash(cell + 0.37 + uSeed), hash(cell + 5.91 + uSeed));
-      vec2 c = (cell + 0.2 + 0.6 * jit) * S;
-      float fc = fuel(c, t);
-      // Не в каждой клетке очаг, и очаги разные: иначе пожар — обои из звёздочек.
-      if (fc < 0.12 || hash(cell + 2.2) < 0.28) continue;
-      float size = S * (0.6 + 0.7 * jit.x * jit.x) * mix(0.6, 1.0, fc) * (0.45 + 0.55 * uHeat);
-      raw = max(raw, flameAt(p, c, size, jit.y * 31.0 + cell.x * 0.7, t, turb, 0.7 + 0.35 * jit.x) * mix(0.55, 0.88, fc) * (0.55 + 0.45 * uHeat));
-    }
   }
   float core = noise(p * 4.0 + vec2(t * 1.1, -t * 0.9));
   float h = clamp(raw * (0.85 + 0.3 * core), 0.0, 1.0);

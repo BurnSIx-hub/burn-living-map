@@ -40,6 +40,8 @@ const CUT = "cut";
 /** Дым тянется за область на столько клеток и идёт поверх токенов. */
 const SMOKE_REACH = 9;
 const ABOVE_TOKENS = 800;
+/** Сразу над тайлами (500), ниже токенов (700): фонтан нарисован тайлом. */
+const FOUNTAIN_LAYER = 510;
 
 /** Все настраиваемые величины, без повторов. */
 const LOOKS = [SPEED, ...Object.values(PARAMS).flat()];
@@ -335,12 +337,16 @@ function makeZone(region, effect, cuts) {
     uRadius: Math.min(raw.width, raw.height) / grid / 2,
     uFishSeed: fishSeed(),
     // Разлом: ось и размер щели по форме области, насколько открыт (см. rift.js).
-    ...(effect === RIFT ? riftUniforms(region, grid) : {})
+    ...(effect === RIFT ? riftUniforms(region, grid) : {}),
+    // Вода и лава берут картинку пола: вода её преломляет и несёт, у лавы светятся
+    // её трещины (см. shaders.js).
+    ...(MAPPED.has(effect) ? floorUniforms(level) : {})
   });
   const mesh = new PIXI.Mesh(geometry, shader);
   mesh.name = `${MODULE_ID}.${region.id}`;
   mesh.elevation = level?.elevation?.bottom ?? 0;
-  mesh.sortLayer = effect === "fire" ? ABOVE_TOKENS : 1;
+  // Фонтан Картографа — тайл (слой тайлов 500): эффект под ним был не виден совсем.
+  mesh.sortLayer = effect === "fire" ? ABOVE_TOKENS : effect === "fountain" ? FOUNTAIN_LAYER : 1;
   mesh.sort = 0;
   mesh.eventMode = "none";
   mesh.blmLevel = level;
@@ -361,6 +367,30 @@ function makeZone(region, effect, cuts) {
 
 /** Эффекты, что светятся сами. */
 const GLOWING = new Set(["lava", "fire", RIFT, "neon"]);
+/** Эффекты, что смотрят на картинку пола под собой. */
+const MAPPED = new Set(["water", "lava"]);
+
+/**
+ * Картинка пола уровня: загруженная текстура фона и где она лежит, в точках сцены.
+ * Нет фона (Boundless, сцена без картинки) или не загружен — `uHasMap` 0, шейдер
+ * обходится без неё.
+ */
+function floorUniforms(level) {
+  const none = { uMap: PIXI.Texture.EMPTY, uMapRect: new Float32Array([0, 0, 1, 1]), uHasMap: 0 };
+  try {
+    const src = level?.background?.src ?? canvas.scene?.background?.src;
+    const tex = src ? foundry.canvas.getTexture?.(src) : null;
+    if (!tex?.baseTexture?.valid) return none;
+    const mesh = canvas.primary.children.find((c) => c.texture?.baseTexture === tex.baseTexture);
+    const r = canvas.dimensions.sceneRect;
+    const rect = mesh
+      ? [mesh.x - mesh.width * (mesh.anchor?.x ?? 0), mesh.y - mesh.height * (mesh.anchor?.y ?? 0), mesh.width, mesh.height]
+      : [r.x, r.y, r.width, r.height];
+    return { uMap: tex, uMapRect: new Float32Array(rect), uHasMap: 1 };
+  } catch {
+    return none;
+  }
+}
 
 /** Темнота сцены сейчас: 0 — день, 1 — ночь. */
 function darkness() {

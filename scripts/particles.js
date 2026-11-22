@@ -1000,6 +1000,8 @@ function idle(src, here, c, r, grid) {
 }
 
 const IDLE = { water: [2.5, 4], swamp: [1.2, 2.5], lava: [0.12, 0.2], fire: [0.12, 0.2] };
+/** Через сколько клеток пути новый след: в воде и болоте — раз в два шага (было каждые 0,3 клетки). */
+const TRAIL = { water: 2, swamp: 2, lava: 0.3, fire: 0.3 };
 
 /** Каждый кадр: кто из токенов где стоит, вошёл ли, идёт или стоит. */
 function wade(dt, grid) {
@@ -1027,7 +1029,7 @@ function wade(dt, grid) {
       w.trail = 0;
     } else if (here) {
       w.trail += moved;
-      if (w.trail >= grid * 0.3) {
+      if (w.trail >= grid * (TRAIL[here] ?? 0.3)) {
         w.trail = 0;
         wake(src, here, c, r, grid);
       }

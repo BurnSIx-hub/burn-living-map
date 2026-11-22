@@ -39,6 +39,11 @@ uniform float uCurrent, uDrift;
 // Второй проход светящихся эффектов (лава, огонь, разлом, неон): тот же шейдер рисует
 // только свечение, поверх освещения сцены, с силой по темноте uNight (см. main.js).
 uniform float uPass, uNight;
+// Картинка пола уровня под областью (у воды и лавы, см. floorOf в main.js): uMapRect —
+// где она лежит, в точках сцены; uHasMap — есть ли (у Boundless и без фона нет).
+uniform sampler2D uMap;
+uniform vec4 uMapRect;
+uniform float uHasMap;
 uniform vec2 uCenter;
 uniform vec2 uFishSeed;
 uniform float uFishKind;
@@ -59,6 +64,9 @@ float fbm(vec2 p) {
 }
 float mask() { return texture2D(uMask, (vPos - uBounds.xy) / uBounds.zw).r; }
 float keep() { return 1.0 - texture2D(uCut, (vPos - uBounds.xy) / uBounds.zw).r; }
+// Цвет картинки пола в точке сцены (в точках, не в клетках).
+vec4 mapAt4(vec2 world) { return texture2D(uMap, (world - uMapRect.xy) / uMapRect.zw); }
+vec3 mapAt(vec2 world) { return mapAt4(world).rgb; }
 // Поверх уже набранного: свой цвет с прозрачностью a.
 vec4 over(vec4 dst, vec3 c, float a) { return vec4(c * a, a) + dst * (1.0 - a); }
 `;
@@ -206,6 +214,14 @@ float blocks(vec2 q) {
   if (q.x < lo.x || q.y < lo.y || q.x > hi.x || q.y > hi.y) return 0.0;
   return 1.0 - smoothstep(0.15, 0.55, maskAt(q));
 }
+// Вода с картинки карты в точке q (клетки) — только если там вода: иначе борт,
+// мостки или берег размазались бы по воде; тогда цвет самой точки here.
+// Прозрачное (верхний этаж, где под ним вода нижнего) не берём.
+vec3 waterAt(vec2 q, vec3 here) {
+  vec4 c = mapAt4(q * uGrid);
+  float ok = step(0.6, maskAt(q)) * step(0.5, 1.0 - texture2D(uCut, (q * uGrid - uBounds.xy) / uBounds.zw).r) * step(0.95, c.a);
+  return mix(here, c.rgb, ok);
+}
 // След за корпусом: x — бурун прямо за кормой (корпус, снесённый по течению и
 // чуть расплывшийся), y — «усы»: края клина в ~20° от носа, как у настоящего
 // судна (клин Кельвина), тонкие у корпуса и шире вдали.
@@ -283,7 +299,28 @@ void main() {
   }
   // На ходу ложбины мягкие, без резкого края: открытое море, а не кляксы.
   float trough = cur > 0.01 ? smoothstep(0.0, 0.45, -swell) * 0.2 : max(0.0, -swell) * 0.3;
-  vec4 o = vec4(0.0, 0.0, 0.0, (0.1 + trough) * deep);
+  vec4 o = vec4(0.0);
+  // Сама вода с карты: рябь её преломляет (рисунок дрожит), течение несёт по ходу —
+  // два слоя со сдвигом фазы, чтобы рисунок не растягивался. Без этого на стоячей
+  // реке и в канале движения почти не было видно.
+  vec4 here4 = mapAt4(vPos);
+  if (uHasMap > 0.5 && here4.a > 0.95) {
+    vec3 here = here4.rgb;
+    vec2 rip = warp * 0.1;
+    vec3 base;
+    if (cur > 0.01) {
+      float L = 1.6;
+      float ph0 = fract(t * cur / L), ph1 = fract(t * cur / L + 0.5);
+      vec3 a = waterAt(p0 - fd * ph0 * L + rip, here);
+      vec3 b = waterAt(p0 - fd * ph1 * L + rip, here);
+      base = mix(b, a, 1.0 - abs(ph0 * 2.0 - 1.0));
+    } else {
+      base = waterAt(p0 + rip, here);
+    }
+    float k = smoothstep(0.55, 0.85, m) * clamp(uRipple, 0.0, 1.0);
+    o = vec4(base * k, k);
+  }
+  o = over(o, vec3(0.0), (0.1 + trough) * deep);
   o.rgb += vec3(0.6, 0.85, 1.0) * (cur > 0.01 ? smoothstep(0.0, 0.4, swell) * 0.03 : max(0.0, swell) * 0.05) * deep;
   // Барашки: редкие белые гребни, плывут с водой.
   if (cur > 0.01) {
@@ -305,10 +342,16 @@ void main() {
   if (bottom > 0.0) o.rgb += vec3(0.85, 1.0, 1.0) * caustic(p * 1.25 + warp * 0.6, t * 0.6 + 23.0) * 0.4 * deep * uCaustic * bottom;
   float glint = pow(noise(p * 9.0 + vec2(t * 1.5, -t)) * noise(p * 14.0 - vec2(t, t * 1.3)), 5.0);
   o.rgb += vec3(1.0) * smoothstep(0.25, 0.5, glint) * 0.3 * deep * uGlint;
-  // Пена у берега: в полосе края маски, бегущими волнами.
-  float band = smoothstep(0.08, 0.35, m) * (1.0 - smoothstep(0.45, 0.8, m));
+  // Пена у берега: в узкой полосе края маски, бегущими волнами и клочьями — не
+  // сплошной обводкой вокруг мостков и бортов (так было).
+  float band = smoothstep(0.12, 0.32, m) * (1.0 - smoothstep(0.42, 0.66, m));
   float waves = sin(m * 18.0 - t * 2.6 + fbm(p * 1.6) * 7.0) * 0.5 + 0.5;
   float foam = band * smoothstep(0.5, 0.95, waves * 0.65 + fbm(p * 5.0 + vec2(t * 0.6, 0.0)) * 0.55);
+  foam *= smoothstep(0.45, 0.7, fbm(p * 1.1 + vec2(t * 0.08, -t * 0.05) + 31.0)) * 0.7;
+  // Рябь на поверхности: тонкие светлые гребни медленно бегут и меняются — движение
+  // видно и на тёмной гладкой воде, где ни дна, ни рисунка (стоячая река, канал).
+  float ridge = 1.0 - abs(fbm(p * 1.3 + warp * 1.2 + vec2(t * 0.12, t * 0.05)) * 2.0 - 1.0);
+  o.rgb += vec3(0.6, 0.75, 0.85) * smoothstep(0.86, 0.97, ridge) * 0.08 * deep * clamp(uRipple, 0.0, 1.5);
   // На ходу край области — борт: его стена вырезана из воды, а маска размыта
   // на полклетки в обе стороны, так что при m < 0,5 под водой уже фальшборт.
   // Пена, тень и сама вода начинаются от края, а не на досках.
@@ -373,8 +416,39 @@ void main() {
   float pulse = 0.7 + 0.3 * sin(t * 2.3 + fbm(p * 1.3) * 6.0);
   float veins = smoothstep(0.52, 0.72, n);
   vec3 hot = mix(vec3(1.0, 0.32, 0.04), vec3(1.0, 0.85, 0.45), smoothstep(0.7, 0.85, n));
-  // Жилы светятся и дышат.
-  vec3 em = hot * (veins * 0.95 + 0.18 * pulse * fbm(p * 0.8 + t * 0.1)) * uGlow;
+  // Лава нарисована на карте — светятся её же трещины (раскалённое на картинке —
+  // оранжевое: красный высокий, синий низкий). По лаве медленно плывут
+  // горячие зоны: там трещины разгораются до жёлтого, свет растекается на края плит,
+  // плиты тают от краёв и остаются тёмными островами в расплаве, а воздух дрожит.
+  // Вне зон корка остывает и темнеет. По трещинам бегут яркие сгустки. (Одни
+  // трещины без зон выглядели неподвижной картинкой; жилы из шума поверх
+  // картинки — оранжевыми облаками; ровная красная заливка плит — плёнкой.)
+  // Без картинки (Boundless) — жилы из шума.
+  vec4 mc = mapAt4(vPos);
+  float useMap = step(0.5, uHasMap) * step(0.95, mc.a);
+  float heat = smoothstep(0.36, 0.64, fbm(p * 0.4 + w * 0.9 + vec2(t * 0.06, -t * 0.045)));
+  // Дрожание воздуха над жаром: картинка берётся чуть со сдвигом.
+  vec2 haze = (vec2(noise(p * 1.5 + vec2(0.0, t * 0.8)), noise(p * 1.5 + vec2(5.2, t * 0.7))) - 0.5)
+              * uGrid * 0.022 * heat * smoothstep(0.3, 0.7, m);
+  vec2 q = vPos + haze;
+  vec4 qc = mapAt4(q);
+  float crack = smoothstep(0.18, 0.5, qc.r - qc.b) * smoothstep(0.3, 0.7, qc.r) * useMap;
+  // Тёплое на картинке — трещина вместе с её нарисованным ореолом: от него свет
+  // растекается на края плит, с него же плиты начинают таять. (Ореол из сдвинутых
+  // выборок вокруг ложился призрачными копиями трещин — волокнами.)
+  float warm = smoothstep(0.03, 0.35, qc.r - qc.b) * useMap;
+  float halo = warm * (1.0 - crack);
+  float melt = smoothstep(0.55, 0.85, heat * 0.6 + warm * 0.45 + (n - 0.5) * 0.3) * useMap;
+  float flow = fbm(p * 1.8 + w * 2.0 + vec2(t * 0.12, -t * 0.09));
+  vec3 molten = mix(vec3(0.9, 0.26, 0.03), vec3(1.0, 0.62, 0.16), smoothstep(0.35, 0.75, flow));
+  float beads = smoothstep(0.58, 0.9, noise(p * 2.2 + w * 2.5 + vec2(t * 0.45, -t * 0.32)) * 0.65
+                                    + noise(p * 5.0 - vec2(t * 0.7, t * 0.5)) * 0.35);
+  float wave = 0.5 + 0.5 * sin(t * 1.6 - dot(p, vec2(0.7, 0.5)) * 2.0 + fbm(p * 0.6 + t * 0.05) * 6.0);
+  vec3 crackCol = mix(vec3(1.0, 0.36, 0.05), vec3(1.0, 0.8, 0.38), clamp(heat * 0.6 + beads * 0.5, 0.0, 1.0));
+  vec3 emMap = crackCol * crack * (0.1 + heat * (0.5 + 0.2 * wave) + beads * (0.3 + 0.4 * heat))
+             + vec3(1.0, 0.3, 0.04) * halo * (0.1 + 0.5 * heat) * (0.75 + 0.25 * pulse) * (1.0 - melt)
+             + molten * melt * (0.2 + 0.25 * beads);
+  vec3 em = mix(hot * (veins * 0.95 + 0.18 * pulse * fbm(p * 0.8 + t * 0.1)), emMap, useMap) * uGlow;
   // Искры: редкие яркие точки всплывают и гаснут.
   vec2 cell = floor(p * 2.0);
   float h = hash(cell);
@@ -386,12 +460,25 @@ void main() {
   if (uPass > 0.5) {
     // Ночью лава светится сама: жилы ярче, а вся гладь — тёплым тлением, иначе
     // нарисованная на карте лава в темноте не видна.
-    vec3 ember = vec3(1.0, 0.3, 0.05) * (0.16 + 0.1 * pulse) * smoothstep(0.25, 0.6, n) * uGlow;
+    // По картинке тлеют её трещины, корка — едва.
+    vec3 ember = mix(vec3(1.0, 0.3, 0.05) * (0.16 + 0.1 * pulse) * smoothstep(0.25, 0.6, n),
+                     vec3(1.0, 0.36, 0.07) * (crack * (0.45 + 0.35 * heat + 0.2 * wave) + halo * (0.1 + 0.3 * heat) + 0.03)
+                       + molten * melt * 0.55,
+                     useMap) * uGlow;
     gl_FragColor = vec4((em * 1.15 + ember) * uNight, 0.0) * uStrength * smoothstep(0.0, 0.3, m) * keep();
     return;
   }
-  // Корка темнеет.
-  vec4 o = vec4(em, smoothstep(0.42, 0.25, n) * 0.35);
+  vec4 o;
+  if (useMap > 0.5) {
+    // Картинка пола заново — со сдвигом от дрожания; вне жара корка остывает и темнеет,
+    // в жару тает в расплав.
+    vec3 base = mapAt(q) * (1.0 - (1.0 - heat) * (0.28 - 0.14 * crack));
+    base = mix(base, molten, melt * 0.85);
+    o = vec4(base + em, 1.0);
+  } else {
+    // Корка темнеет — только у лавы без картинки.
+    o = vec4(em, smoothstep(0.42, 0.25, n) * 0.35);
+  }
   gl_FragColor = o * uStrength * smoothstep(0.0, 0.3, m) * keep();
 }`;
 
@@ -778,44 +865,39 @@ vec3 heatColor(float h) {
 }
 const float PI2 = 6.2831853;
 float hash1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
-// Один очаг сверху: шесть языков-лепестков от середины. У каждого своя длина
-// (дрожит), угол (качается) и изгиб; у основания языки широкие и сливаются в
-// сплошное пламя, к кончикам сужаются и расходятся. Край рвёт шум, дальние части
-// сносит ветром. raw — жар без порога: 1 в середине, к кончикам к нулю.
-// turb — шум рваного края (wob, rag, len) в этой точке: один на точку для всех очагов.
-// hot — жар середины: у костра выше языков, у очагов пожара ниже, чтобы
-// они не горели одинаковыми звёздочками.
+// Один очаг сверху: языки клубятся от середины во все стороны, у основания
+// сливаются в сплошное пламя. Длина языков по кругу — шум по окружности (через
+// cos/sin угла, без шва и без симметрии), дрожит и всё время меняется; внутри —
+// струи наружу, край рвёт шум, дальние части сносит ветром. (Было шесть одинаковых
+// лепестков — сверху очаг читался плоской звёздочкой.) Возвращает жар без порога:
+// 1 в середине, к кончикам к нулю. turb — шум рваного края в этой точке, один на
+// точку для всех очагов; hot — жар середины (у костра выше, у очагов пожара ниже).
 float flameAt(vec2 p, vec2 c, float size, float seed, float t, vec3 turb, float hot) {
   vec2 rel = (p - c) / size;
   rel -= windDir() * 0.3 * length(rel);
   float r = length(rel);
-  if (r > 1.3) return 0.0;
-  float ang = atan(rel.y, rel.x) + (turb.x - 0.5) * 1.0 * r + (turb.y - 0.5) * 0.35 * r;
-  float rr = r * (0.84 + 0.3 * turb.z + 0.12 * (turb.y - 0.5));
-  float petals = 0.0;
-  for (int i = 0; i < 6; i++) {
-    float fi = float(i);
-    float hi = hash1(seed * 7.13 + fi * 3.71);
-    float a = (fi + 0.6 * hi) / 6.0 * PI2 + 0.35 * sin(t * (0.7 + 0.6 * hi) + hi * 6.2) + 0.7 * rr * (hi - 0.5);
-    // Длина дрожит: два синуса разной частоты — дёшево и без повтора на глаз.
-    float len = 0.6 + 0.2 * (sin(t * (1.9 + 1.3 * hi) + hi * 20.0) + sin(t * (3.7 + 2.1 * hi) + seed + fi)) * 0.5 + 0.2;
-    float dd = abs(mod(ang - a + PI2 * 0.5, PI2) - PI2 * 0.5);
-    float x = clamp(rr / len, 0.0, 1.0);
-    float wid = 0.66 * pow(1.0 - x, 0.65);
-    // Край языка мягкий: очаги вливаются в общее пламя, а не лежат узором.
-    float body = (1.0 - smoothstep(wid * 0.3, wid + 0.08, dd)) * smoothstep(len, len * 0.85, rr);
-    petals = max(petals, body * (1.0 - x));
-  }
-  float core = 1.0 - smoothstep(0.0, 0.42, rr);
-  // Прожилки: светлые и тёмные струи бегут от середины к кончикам.
-  vec2 dir = rel / max(r, 0.25);
-  float streak = noise3(vec3(dir * 5.0 + seed, rr * 1.8 - t * 3.2));
-  // Середина жарче языков: там пламя выше всего.
-  return max(petals, core * hot) * (0.72 + 0.5 * streak);
+  if (r > 1.45) return 0.0;
+  vec2 dir = rel / max(r, 0.001);
+  // Угол слегка закручен турбулентностью: языки гнутся и клубятся.
+  float ang = atan(rel.y, rel.x) + (turb.x - 0.5) * 0.9 * r;
+  vec2 cs = vec2(cos(ang), sin(ang));
+  float lobes = noise3(vec3(cs * 2.0 + seed, t * 1.8)) * 0.55 + noise3(vec3(cs * 5.0 + seed * 1.7, t * 3.6)) * 0.45;
+  // Контраст: языки длинные и короткие вперемешку, а не ровный ком.
+  lobes = smoothstep(0.25, 0.8, lobes);
+  float len = 0.32 + 0.62 * lobes;
+  // Струи — клубящаяся турбулентность, не лучи от середины: лучи у каждого из
+  // десятков очагов пожара снова складывались в звёздочки.
+  float flow = noise3(vec3(rel * 2.6 + seed, t * 2.8)) * 0.6 + noise3(vec3(rel * 6.0 - seed, t * 4.5)) * 0.4;
+  float rr = r * (0.88 + 0.24 * (turb.z - 0.5)) / len;
+  float body = clamp(1.0 - rr, 0.0, 1.0);
+  body = pow(body, 0.9) * (0.65 + 0.7 * flow);
+  // Рваный край: где шум слаб, язык обрывается раньше.
+  body *= smoothstep(0.0, 0.22, body + (turb.y - 0.5) * 0.28);
+  float core = (1.0 - smoothstep(0.0, 0.38, r)) * hot * 0.8;
+  return clamp(max(body, core * (0.75 + 0.35 * flow)), 0.0, 1.2);
 }
 // Весь огонь в точке: у костра — большой очаг и три поменьше вокруг, у пожара —
-// сетка очагов по горящим пятнам (у каждой клетки свой, со сдвигом), их языки
-// перекрываются в сплошное пламя, по краю — отдельные языки наружу.
+// сплошное клубящееся пламя по горящим пятнам с рваным краем.
 float fireAt(vec2 p, float t) {
   float heat = 0.0;
   if (uSpread < 0.5) {
@@ -840,26 +922,16 @@ float fireAt(vec2 p, float t) {
   // Тело пожара: сплошное пламя над топливом, по нему бегут струи — от него
   // очаги ниже дают языки наружу и объём.
   float f = fuel(p, t);
-  // Край тела рваный и внутри области, по телу — тёмно-красные провалы и
-  // жёлтые сгустки, они переливаются.
-  float edge = (noise3(vec3(p * 3.0, t * 1.1)) - 0.5) * 0.35;
-  float churn = fbm3(vec3(p * 1.6, t * 0.9));
-  float body = smoothstep(0.35, 0.95, f + edge) * (0.25 + 0.75 * smoothstep(0.25, 0.75, churn)) * (0.85 + 0.3 * noise3(vec3(p * 6.0, t * 3.0)));
-  heat = body * 0.72;
-  float S = 0.9;
-  vec2 ip = floor(p / S);
-  for (int y = -1; y <= 1; y++) {
-    for (int x = -1; x <= 1; x++) {
-      vec2 cell = ip + vec2(float(x), float(y));
-      vec2 jit = vec2(hash(cell + 0.37), hash(cell + 5.91));
-      vec2 c = (cell + 0.2 + 0.6 * jit) * S;
-      float fc = fuel(c, t);
-      // Не в каждой клетке очаг, и очаги разные: иначе пожар — обои из звёздочек.
-      if (fc < 0.12 || hash(cell + 2.2) < 0.28) continue;
-      float size = S * (0.6 + 0.7 * jit.x * jit.x) * mix(0.6, 1.0, fc);
-      heat = max(heat, flameAt(p, c, size, jit.y * 31.0 + cell.x * 0.7, t, turb, 0.7 + 0.35 * jit.x) * mix(0.55, 0.88, fc));
-    }
-  }
+  // Сплошное клубящееся пламя над топливом, без отдельных очагов: сетка очагов
+  // с яркой серединой у каждого читалась россыпью звёздочек. Жар — два слоя
+  // кипящего шума: светлые сгустки, тёмно-красные и дымные провалы между ними,
+  // всё переливается. Край рваный: языки рвутся наружу клочьями.
+  float edge = (noise3(vec3(p * 2.2, t * 1.3)) - 0.5) * 0.45 + (noise3(vec3(p * 5.0, t * 3.2)) - 0.5) * 0.4;
+  float n1 = fbm3(vec3(p * 1.3, t * 0.8));
+  float n2 = fbm3(vec3(p * 3.1 + 5.0, t * 1.9));
+  float boil = smoothstep(0.4, 0.82, n1 * 0.7 + n2 * 0.5);
+  float body = smoothstep(0.3, 0.8, f + edge);
+  heat = body * (0.06 + 0.8 * boil) * (0.8 + 0.3 * turb.z);
   return heat;
 }
 void main() {

@@ -427,42 +427,49 @@ float fbm(vec2 p) {
   for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
   return v;
 }
+vec4 over(vec4 dst, vec3 c, float a) { return vec4(c * a, a) + dst * (1.0 - a); }
+// Лужи берут цвет туч поверх пола (а не прибавляют свет): так их видно и на тёмном
+// камне, и на светлом песке. Было — прибавка в десятые доли яркости, на тёмном
+// камне незаметная.
 void main() {
   float m = texture2D(uMask, (vPos - uBounds.xy) / uBounds.zw).r;
   if (m < 0.02) discard;
   vec2 p = vPos / uGrid;
   float t = uTime;
   // Лужи там, где пол ниже: пятна шума. Вокруг них просто мокро.
-  float n = fbm(p * 0.32 + 11.0);
-  float puddle = smoothstep(0.54, 0.6, n);
-  float damp = smoothstep(0.32, 0.56, n);
+  float n = fbm(p * 0.3 + 11.0);
+  float puddle = smoothstep(0.5, 0.56, n);
+  float rim = smoothstep(0.46, 0.5, n) * (1.0 - puddle);
+  float damp = smoothstep(0.28, 0.5, n);
   // Отражение неба: медленные светлые и тёмные разводы туч.
   float sky = fbm(p * 0.22 + vec2(t * 0.025, t * 0.012));
-  vec3 refl = mix(vec3(0.5, 0.58, 0.68), vec3(0.9, 0.94, 1.0), smoothstep(0.35, 0.7, sky));
-  // Мокрое темнее сухого.
-  vec4 o = vec4(0.0, 0.0, 0.0, 0.05 * damp + 0.05 * puddle);
-  float shine = puddle * (0.07 + 0.07 * sky) + damp * 0.015;
-  // Круги от капель: в лужах заметнее, на мокром — едва.
+  vec3 refl = mix(vec3(0.42, 0.48, 0.56), vec3(0.82, 0.86, 0.92), smoothstep(0.35, 0.7, sky));
+  // Мокрое темнее сухого и чуть блестит пятнами.
+  vec4 o = vec4(0.0);
+  o = over(o, vec3(0.0), 0.12 * damp);
+  float gloss = smoothstep(0.55, 0.85, fbm(p * 0.9 + vec2(t * 0.05, 0.0)));
+  o.rgb += refl * gloss * damp * 0.06;
+  // Лужа — зеркало неба, у края тёмная кайма.
+  o = over(o, vec3(0.05, 0.06, 0.07), rim * 0.25);
+  o = over(o, refl * 0.85, puddle * 0.42);
+  // Круги от капель: в лужах ярко, на мокром — слабо.
   float rings = 0.0;
-  for (int k = 0; k < 2; k++) {
-    vec2 q = p * (2.6 + float(k) * 1.3) + float(k) * 7.7;
+  for (int k = 0; k < 3; k++) {
+    vec2 q = p * (2.2 + float(k) * 1.1) + float(k) * 7.7;
     vec2 cell = floor(q);
     float h = hash(cell);
     float ph = fract(t * (0.7 + 0.5 * h) * uHeavy + h * 13.0);
     vec2 c = cell + 0.2 + 0.6 * vec2(hash(cell + 3.3), hash(cell + 8.1));
     float d = length(q - c);
-    float r = 0.04 + ph * 0.3;
-    rings += smoothstep(0.03, 0.0, abs(d - r)) * (1.0 - ph) * step(0.35, h);
+    float r = 0.04 + ph * 0.32;
+    rings += smoothstep(0.035, 0.0, abs(d - r)) * (1.0 - ph) * step(0.3, h);
   }
-  shine += rings * (puddle * 0.16 + damp * 0.03);
+  o.rgb += refl * rings * (puddle * 0.45 + damp * 0.08);
   // Брызги: короткие светлые точки, на мокром везде.
   vec2 sc = floor(p * 6.0);
   float sh = hash(sc + floor(t * 4.0 * uHeavy));
   vec2 sp = (sc + vec2(hash(sc + 1.1), hash(sc + 2.9))) / 6.0;
-  shine += smoothstep(0.035, 0.0, length(p - sp)) * step(0.93, sh) * 0.12 * damp;
-  // Свет ложится сложением (малая прозрачность), тёмное — обычной.
-  o.rgb += refl * shine;
-  o.a += shine * 0.3;
+  o.rgb += refl * smoothstep(0.035, 0.0, length(p - sp)) * step(0.9, sh) * 0.3 * damp;
   gl_FragColor = o * uStrength * m;
 }`;
 
