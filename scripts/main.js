@@ -204,7 +204,8 @@ function effectOf(region) {
 }
 
 function clear() {
-  for (const { mesh, mask, cut } of zones.values()) {
+  for (const { mesh, glow, mask, cut } of zones.values()) {
+    if (glow && !glow.destroyed) glow.destroy();
     if (!mesh.destroyed) mesh.destroy();
     mask.destroy(true);
     cut.destroy(true);
@@ -290,8 +291,11 @@ function fallUniforms(region, flow) {
 
 /** Переложить ползунки в работающие шейдеры: без пересборки, можно хоть каждый кадр. */
 function refreshLooks() {
-  for (const { region, mesh } of zones.values()) {
-    if (!mesh.destroyed) Object.assign(mesh.shader.uniforms, looksOf(region));
+  for (const { region, mesh, glow } of zones.values()) {
+    if (mesh.destroyed) continue;
+    const looks = looksOf(region);
+    Object.assign(mesh.shader.uniforms, looks);
+    if (glow && !glow.destroyed) Object.assign(glow.shader.uniforms, looks);
   }
 }
 
@@ -306,9 +310,10 @@ function makeZone(region, effect, cuts) {
   if (!tri?.indices?.length) return null;
   const grid = canvas.grid.size;
   // Поля вокруг: размытый край выходит за контур на полклетки.
-  const pad = grid * (effect === "fire" ? SMOKE_REACH : effect === "waterfall" ? 2.5 : effect === RIFT ? 1 : 0.5);
+  const pad = grid * (effect === "fire" ? SMOKE_REACH : effect === "waterfall" ? 2.5 : effect === "fog" ? 2.2 : effect === RIFT ? 1 : 0.5);
   const b = region.bounds.clone().pad(pad);
-  const mask = drawMask(tri, b, grid);
+  // Туман редеет к краю на клетку: маска размыта шире, рваный край даёт шейдер.
+  const mask = drawMask(tri, b, grid, effect === "fog" ? 1.1 : 0.35);
 
   // Меш — прямоугольник с полями; форму даёт маска.
   const verts = new Float32Array([b.left, b.top, b.right, b.top, b.right, b.bottom, b.left, b.bottom]);
@@ -340,16 +345,35 @@ function makeZone(region, effect, cuts) {
   mesh.eventMode = "none";
   mesh.blmLevel = level;
   canvas.primary.addChild(mesh);
-  return { region, effect, mesh, mask, cut, clock: performance.now() / 1000 % 3600 };
+  // Светящееся (лава, огонь, разлом, неон) — ещё раз, вторым проходом того же шейдера,
+  // поверх освещения сцены: ночью оно не темнеет вместе с картой (см. uPass в shaders.js).
+  // Как свет светлячков, в группе окружения; днём (темнота 0) не рисуется.
+  let glow = null;
+  if (GLOWING.has(effect) && canvas.environment) {
+    glow = new PIXI.Mesh(geometry, PIXI.Shader.from(VERT, FRAG[effect], { ...shader.uniforms, uPass: 1, uNight: 0 }));
+    glow.name = `${MODULE_ID}.${region.id}.glow`;
+    glow.eventMode = "none";
+    glow.visible = false;
+    canvas.environment.addChild(glow);
+  }
+  return { region, effect, mesh, glow, mask, cut, clock: performance.now() / 1000 % 3600 };
+}
+
+/** Эффекты, что светятся сами. */
+const GLOWING = new Set(["lava", "fire", RIFT, "neon"]);
+
+/** Темнота сцены сейчас: 0 — день, 1 — ночь. */
+function darkness() {
+  return canvas.environment?.darknessLevel ?? canvas.scene?.environment?.darknessLevel ?? 0;
 }
 
 /** Силуэт области в низком разрешении, размытый: 1 внутри, 0 снаружи. */
-function drawMask(tri, b, grid) {
+function drawMask(tri, b, grid, soft = 0.35) {
   const s = MASK_SCALE;
   const { rt, w, h } = target(b, s);
   const g = silhouette([tri, ...beyondEdges(tri)], b, s);
-  const blur = new PIXI.BlurFilter(grid * 0.35 * s, 4);
-  blur.padding = Math.ceil(grid * s);
+  const blur = new PIXI.BlurFilter(grid * soft * s, 4);
+  blur.padding = Math.ceil(grid * s * Math.max(1, soft * 2));
   g.filters = [blur];
   g.filterArea = new PIXI.Rectangle(0, 0, w, h);
   canvas.app.renderer.render(g, { renderTexture: rt, clear: true });
@@ -432,8 +456,9 @@ function tick() {
   const now = performance.now() / 1000;
   const dt = Math.min(now - lastTick, 0.25);
   lastTick = now;
+  const night = darkness();
   for (const zone of zones.values()) {
-    const { mesh, region } = zone;
+    const { mesh, glow, region } = zone;
     if (mesh.destroyed) continue;
     // Часы копят время со своей скоростью, поэтому смена скорости не дёргает картинку.
     zone.clock = (zone.clock + dt * look(region, SPEED.key)) % 3600;
@@ -441,6 +466,13 @@ function tick() {
     if (zone.effect === RIFT) mesh.shader.uniforms.uOpen = openness(region);
     // На многоэтажной сцене — только на видимых этажах.
     mesh.visible = mesh.blmLevel?.isVisible ?? true;
+    if (glow && !glow.destroyed) {
+      const u = glow.shader.uniforms;
+      u.uTime = zone.clock;
+      u.uNight = night;
+      if (zone.effect === RIFT) u.uOpen = mesh.shader.uniforms.uOpen;
+      glow.visible = mesh.visible && night > 0.02;
+    }
   }
 }
 

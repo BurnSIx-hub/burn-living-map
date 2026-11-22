@@ -36,6 +36,9 @@ uniform float uTime, uGrid, uSpeed, uStrength, uRadius;
 uniform float uRipple, uFoam, uCaustic, uGlint, uFish, uGlow, uSparks, uMurk, uBubbles, uDensity, uFlame, uSmoke, uWind;
 uniform float uFlow, uStreaks, uSpray, uJet, uSpill;
 uniform float uCurrent, uDrift;
+// Второй проход светящихся эффектов (лава, огонь, разлом, неон): тот же шейдер рисует
+// только свечение, поверх освещения сцены, с силой по темноте uNight (см. main.js).
+uniform float uPass, uNight;
 uniform vec2 uCenter;
 uniform vec2 uFishSeed;
 uniform float uFishKind;
@@ -206,11 +209,13 @@ float blocks(vec2 q) {
 // След за корпусом: x — бурун прямо за кормой (корпус, снесённый по течению и
 // чуть расплывшийся), y — «усы»: края клина в ~20° от носа, как у настоящего
 // судна (клин Кельвина), тонкие у корпуса и шире вдали.
-vec2 wakeAt(vec2 p, vec2 fd) {
+// j (0..1, плавный шум) сдвигает шаг выборки: без него край следа шёл ступенями
+// по 1,4 клетки — копиями корпуса.
+vec2 wakeAt(vec2 p, vec2 fd, float j) {
   vec2 sd = vec2(-fd.y, fd.x);
   float core = 0.0, wide = 0.0, inner = 0.0;
   for (int k = 1; k <= 12; k++) {
-    float s = float(k) * 1.4;
+    float s = (float(k) - 0.5 + j) * 1.4;
     float fall = 1.0 - float(k) / 13.0;
     vec2 q = p - fd * s;
     // Бурун уже корпуса (вода сходится за кормой) и вдали чуть шире.
@@ -308,6 +313,7 @@ void main() {
   // на полклетки в обе стороны, так что при m < 0,5 под водой уже фальшборт.
   // Пена, тень и сама вода начинаются от края, а не на досках.
   float hull0 = cur > 0.01 ? 0.3 : 0.0;
+  float dense = 0.0;
   if (cur > 0.01) {
     // Сплошной полосы прибоя на ходу нет — у борта рваная пена вдоль хода
     // (ниже). Ровная полоса вокруг всего корпуса читалась льдом.
@@ -333,15 +339,26 @@ void main() {
     float tear = mix(streak, churn, smoothstep(0.2, 0.7, bow));
     foam = max(foam, hullBand * inner * smoothstep(0.4, 0.66, tear + bow * 0.12) * (0.4 + 0.5 * bow) * min(cur, 2.0));
     // След за кормой: бурун и расходящиеся усы.
-    vec2 w = wakeAt(p0, fd);
-    // Бурун — клочьями, с завихрением, а не струями.
-    vec2 fc = vec2(dot(p, fd) * 1.3, dot(p, sd) * 1.7);
-    float froth = fbm(fc * 1.8 + 3.0 + warp * 1.6 + vec2(sin(t * 0.7 + fc.y), cos(t * 0.5 + fc.x)) * 0.25);
-    foam = max(foam, w.x * smoothstep(0.48, 0.74, froth + w.x * 0.12) * 0.95 * min(cur, 1.5));
-    foam = max(foam, w.y * smoothstep(0.42, 0.64, streak) * 0.7 * min(cur, 1.5));
-    o.rgb += vec3(0.4, 0.6, 0.65) * w.x * 0.04 * deep;
+    vec2 w = wakeAt(p0, fd, noise(p * 2.3));
+    // У кормы вода кипит: клубы в осях корабля, живут на месте и бурлят. Дальше пена
+    // рвётся в кружевные полосы вдоль хода и уплывает с водой. (Был порог по пятнистому
+    // шуму — пёстрые квадратные пятна.)
+    float boil = fbm(vec2(dot(p0, fd), dot(p0, sd)) * 2.2 + warp * 1.4 + vec2(t * 0.9, -t * 0.6));
+    vec2 fc = vec2(dot(p, fd) * 0.6, dot(p, sd) * 3.0);
+    float lace = 1.0 - abs(fbm(fc * 1.4 + 7.0 + warp * 0.8) * 2.0 - 1.0);
+    lace = lace * lace * lace;
+    // Края следа рваные: порог по медленному шуму, а не копия борта.
+    float wx = w.x * smoothstep(0.12, 0.42, w.x + (fbm(p * 0.9 + 3.0) - 0.5) * 0.55);
+    dense = smoothstep(0.45, 0.95, wx);
+    float wake = mix(smoothstep(0.45, 0.82, lace) * 0.85, smoothstep(0.36, 0.6, boil), dense) * wx;
+    foam = max(foam, wake * min(cur, 1.5));
+    // Взбитая вода светлее и бирюзовее: след читается полосой и между клочьями.
+    o.rgb += vec3(0.25, 0.45, 0.5) * wx * 0.1 * deep;
+    // Усы — тонкие гребни пены по краям клина.
+    float arm = 1.0 - abs(fbm(fc * 2.2 + 13.0) * 2.0 - 1.0);
+    foam = max(foam, w.y * smoothstep(0.62, 0.88, arm) * 0.8 * min(cur, 1.5));
   }
-  o = over(o, vec3(0.93, 0.97, 1.0), clamp(foam * uFoam, 0.0, 1.0) * 0.6);
+  o = over(o, vec3(0.93, 0.97, 1.0), clamp(foam * uFoam, 0.0, 1.0) * (0.6 + 0.25 * dense));
   gl_FragColor = o * uStrength * smoothstep(hull0, hull0 + 0.25, m) * keep();
 }`;
 
@@ -356,59 +373,104 @@ void main() {
   float pulse = 0.7 + 0.3 * sin(t * 2.3 + fbm(p * 1.3) * 6.0);
   float veins = smoothstep(0.52, 0.72, n);
   vec3 hot = mix(vec3(1.0, 0.32, 0.04), vec3(1.0, 0.85, 0.45), smoothstep(0.7, 0.85, n));
-  // Корка темнеет, жилы светятся и дышат.
-  vec4 o = vec4(0.0, 0.0, 0.0, smoothstep(0.42, 0.25, n) * 0.35);
-  o.rgb += hot * (veins * 0.95 + 0.18 * pulse * fbm(p * 0.8 + t * 0.1)) * uGlow;
+  // Жилы светятся и дышат.
+  vec3 em = hot * (veins * 0.95 + 0.18 * pulse * fbm(p * 0.8 + t * 0.1)) * uGlow;
   // Искры: редкие яркие точки всплывают и гаснут.
   vec2 cell = floor(p * 2.0);
   float h = hash(cell);
   float ph = fract(t * 0.25 + h * 7.0);
   vec2 sp = (cell + vec2(hash(cell + 1.3), hash(cell + 7.1))) / 2.0;
-  o.rgb += vec3(1.0, 0.7, 0.3) * smoothstep(0.06, 0.0, length(p - sp)) * (1.0 - ph) * step(0.7, h) * 1.5 * uSparks;
+  em += vec3(1.0, 0.7, 0.3) * smoothstep(0.06, 0.0, length(p - sp)) * (1.0 - ph) * step(0.7, h) * 1.5 * uSparks;
   // Жар на берегу: светится и за краем.
-  o.rgb += vec3(1.0, 0.36, 0.06) * (1.0 - smoothstep(0.0, 0.6, m)) * 0.35 * pulse * uGlow;
-  gl_FragColor = o * uStrength * smoothstep(0.0, 0.3, m) * keep();
-}`;
-
-const SWAMP = COMMON + `
-void main() {
-  float m = mask();
-  if (m < 0.01) discard;
-  vec2 p = vPos / uGrid;
-  float t = uTime * uSpeed;
-  // Муть ползёт: зеленоватые и тёмные пятна.
-  float murk = fbm(p * 0.8 + vec2(t * 0.03, t * 0.02));
-  vec4 o = vec4(0.0, 0.0, 0.0, clamp(smoothstep(0.45, 0.7, murk) * 0.25 * uMurk, 0.0, 1.0));
-  o = over(o, vec3(0.45, 0.55, 0.2), clamp(smoothstep(0.55, 0.3, murk) * 0.12 * uMurk, 0.0, 1.0));
-  // Пузыри: в каждой клетке свой, растёт кольцом и лопается.
-  for (int k = 0; k < 2; k++) {
-    vec2 q = p * (1.4 + float(k) * 0.9) + float(k) * 5.3;
-    vec2 cell = floor(q);
-    float h = hash(cell);
-    float ph = fract(t * (0.18 + 0.12 * h) + h * 9.0);
-    vec2 c = cell + 0.25 + 0.5 * vec2(hash(cell + 2.1), hash(cell + 5.7));
-    float r = 0.05 + ph * 0.22;
-    float d = length(q - c);
-    float alive = step(0.78, h) * smoothstep(1.0, 0.85, ph) * uBubbles;
-    float ring = smoothstep(0.035, 0.0, abs(d - r)) * alive;
-    float cap = smoothstep(r, r * 0.6, d) * alive * (1.0 - ph);
-    o.rgb += vec3(0.75, 0.85, 0.55) * ring * 0.3;
-    o = over(o, vec3(0.35, 0.42, 0.18), cap * 0.35);
+  em += vec3(1.0, 0.36, 0.06) * (1.0 - smoothstep(0.0, 0.6, m)) * 0.35 * pulse * uGlow;
+  if (uPass > 0.5) {
+    // Ночью лава светится сама: жилы ярче, а вся гладь — тёплым тлением, иначе
+    // нарисованная на карте лава в темноте не видна.
+    vec3 ember = vec3(1.0, 0.3, 0.05) * (0.16 + 0.1 * pulse) * smoothstep(0.25, 0.6, n) * uGlow;
+    gl_FragColor = vec4((em * 1.15 + ember) * uNight, 0.0) * uStrength * smoothstep(0.0, 0.3, m) * keep();
+    return;
   }
-  float glint = pow(noise(p * 8.0 + vec2(t * 0.6, -t * 0.4)), 6.0);
-  o.rgb += vec3(0.9, 1.0, 0.8) * smoothstep(0.3, 0.6, glint) * 0.2;
+  // Корка темнеет.
+  vec4 o = vec4(em, smoothstep(0.42, 0.25, n) * 0.35);
   gl_FragColor = o * uStrength * smoothstep(0.0, 0.3, m) * keep();
 }`;
 
-const FOG = COMMON + `
+// Болото: стоячая мутная вода под ряской. Муть и ряска ползут медленно и
+// закручиваются, по ним — мягкий отлив. Пузыри редкие и крупные: вспухает тёмный
+// купол с бликом, лопается, по воде расходится и гаснет кольцо. Изредка — горсть
+// мелких пузырьков. (Был блик из степени шума — на его квадратной решётке он давал
+// уголки и прямоугольники, «закорючки»; и пузырей было по полтора на клетку.)
+const SWAMP = COMMON + `
+// Пузырь в ячейке размера S: период и место свои, жив не каждый.
+vec4 bubble(vec4 o, vec2 p, float t, float S, float chance, float big, float seed) {
+  vec2 cell = floor(p / S);
+  float h = hash(cell + seed);
+  if (h > chance) return o;
+  vec2 c = (cell + 0.3 + 0.4 * vec2(hash(cell + 2.1 + seed), hash(cell + 5.7 + seed))) * S;
+  float period = 5.0 + 7.0 * hash(cell + 8.3 + seed);
+  float ph = fract(t / period + h * 7.0);
+  float d = length(p - c);
+  // Купол растёт и лопается.
+  float grow = smoothstep(0.0, 0.2, ph) * step(ph, 0.22);
+  float rd = big * (0.35 + 0.65 * grow);
+  float dome = smoothstep(rd, rd * 0.75, d) * grow;
+  o = over(o, vec3(0.13, 0.15, 0.07), dome * 0.55);
+  o.rgb += vec3(0.8, 0.85, 0.6) * smoothstep(rd * 0.45, 0.0, length(p - c + vec2(rd * 0.3, rd * 0.3))) * dome * 0.55;
+  // Кольцо расходится и гаснет; внутри него тёмная ложбинка.
+  float rp = (ph - 0.22) / 0.45;
+  if (rp > 0.0 && rp < 1.0) {
+    float rr = big * 0.8 + rp * big * 5.0;
+    float fade = (1.0 - rp) * (1.0 - rp);
+    o.rgb += vec3(0.68, 0.75, 0.5) * smoothstep(0.04, 0.0, abs(d - rr)) * fade * 0.34;
+    o = over(o, vec3(0.04, 0.05, 0.02), smoothstep(0.06, 0.0, abs(d - rr + 0.06)) * fade * 0.2);
+  }
+  return o;
+}
 void main() {
   float m = mask();
   if (m < 0.01) discard;
   vec2 p = vPos / uGrid;
   float t = uTime * uSpeed;
-  float f = fbm(p * 0.32 + vec2(t * 0.05, t * 0.022)) + fbm(p * 0.9 - vec2(t * 0.03, 0.0)) * 0.25;
-  float a = clamp(smoothstep(0.38, 0.85, f) * 0.75 * uDensity, 0.0, 1.0);
-  gl_FragColor = vec4(vec3(0.82, 0.85, 0.88) * a, a) * uStrength * m * keep();
+  vec2 w = vec2(fbm(p * 0.45 + vec2(t * 0.018, 0.0)), fbm(p * 0.45 + vec2(3.3, t * 0.014))) - 0.5;
+  float murk = fbm(p * 0.6 + w * 1.4 + vec2(t * 0.012, t * 0.008));
+  vec4 o = vec4(0.0);
+  // Тёмные омуты и светлая ряска между ними — пятна большие и мягкие.
+  o = over(o, vec3(0.04, 0.06, 0.03), smoothstep(0.5, 0.78, murk) * 0.32 * uMurk);
+  float scum = fbm(p * 1.3 + w * 2.2 - vec2(t * 0.01, -t * 0.006));
+  o = over(o, vec3(0.44, 0.5, 0.2), smoothstep(0.52, 0.78, scum) * smoothstep(0.58, 0.38, murk) * 0.24 * uMurk);
+  // Отлив: широкая мягкая полоса, плывёт вместе с мутью.
+  float sheen = smoothstep(0.62, 0.8, noise(p * 0.7 + w * 1.6 + vec2(t * 0.03, -t * 0.02)));
+  o.rgb += vec3(0.55, 0.62, 0.42) * sheen * smoothstep(0.6, 0.4, murk) * 0.07;
+  // Пузыри: крупные редкие и горсти мелких.
+  o = bubble(o, p, t, 2.4, 0.5 * uBubbles, 0.11, 0.0);
+  o = bubble(o, p, t * 1.3, 1.1, 0.18 * uBubbles, 0.045, 17.0);
+  gl_FragColor = o * uStrength * smoothstep(0.0, 0.3, m) * keep();
+}`;
+
+// Туман: клочья ползут и закручиваются, между ними — лёгкая дымка. Край рваный
+// и плывёт: маску смотрим со сдвигом по медленному шуму, поэтому по контуру
+// области туман редеет неровно, без прямых линий (была серая полоса с краями
+// прямоугольника, почти неподвижная). Маска тумана размыта шире, меш с полями.
+const FOG = COMMON + `
+float maskAt(vec2 q) { return texture2D(uMask, (q * uGrid - uBounds.xy) / uBounds.zw).r; }
+void main() {
+  vec2 p = vPos / uGrid;
+  float t = uTime * uSpeed;
+  vec2 drift = vec2(0.16, 0.06) * t;
+  vec2 warp = vec2(fbm(p * 0.35 - drift * 0.5), fbm(p * 0.35 + vec2(5.2, 1.7) - drift * 0.5)) - 0.5;
+  float m = maskAt(p + warp * 1.8);
+  if (m < 0.01) discard;
+  // Клочья: крупные медленные и вытянутые быстрее, в разные стороны.
+  float big = fbm(p * 0.28 - drift + warp * 0.8);
+  float wisps = fbm(vec2(p.x * 0.8, p.y * 1.5) - drift * 1.7 + 3.1);
+  float f = big * 0.75 + wisps * 0.45;
+  float a = smoothstep(0.32, 0.8, f) * 0.85 * uDensity;
+  a = max(a, 0.3 * uDensity * smoothstep(0.2, 0.6, big));
+  // Край рвётся клочьями: порог маски свой в каждой точке и плывёт вместе с туманом.
+  float er = fbm(p * 1.1 - drift * 1.2 + 9.0);
+  a = clamp(a * smoothstep(er * 0.4, er * 0.4 + 0.3, m), 0.0, 0.92);
+  vec3 col = mix(vec3(0.74, 0.77, 0.8), vec3(0.88, 0.9, 0.92), smoothstep(0.5, 0.9, f));
+  gl_FragColor = vec4(col * a, a) * uStrength * keep();
 }`;
 
 // Водопад сверху, как его рисуют на картах: плотная белая вспененная струя с рваными
@@ -812,10 +874,11 @@ void main() {
   float wide = uRadius * 0.55 * uSpread;
   float sm = clamp(smoke(p, uCenter, t, wide) * uSmoke * 0.95, 0.0, 0.88);
   vec4 o = vec4(vec3(0.5, 0.5, 0.53) * sm, sm);
-  // Обугленная земля и угли под пожаром.
+  // Обугленная земля и угли под пожаром. em — что светится само (для ночного прохода).
   float coal = fbm(p * 4.0 + vec2(0.0, t * 0.2));
   o = over(o, vec3(0.06, 0.04, 0.03), f0 * 0.45 * uSpread);
-  o.rgb += vec3(1.0, 0.3, 0.05) * f0 * smoothstep(0.5, 0.75, coal) * (0.5 + 0.5 * sin(t * 2.0 + coal * 9.0)) * 0.55;
+  vec3 em = vec3(1.0, 0.3, 0.05) * f0 * smoothstep(0.5, 0.75, coal) * (0.5 + 0.5 * sin(t * 2.0 + coal * 9.0)) * 0.55;
+  o.rgb += em;
   float raw = fireAt(p, t);
   // Жар неровный: яркие сгустки и тусклые места.
   float core = noise(p * 4.0 + vec2(t * 1.1, -t * 0.9));
@@ -828,9 +891,12 @@ void main() {
   float a = smoothstep(0.02, 0.45, h) * uFlame;
   // Тело огня — обычной прозрачностью, жар — сложением поверх.
   o = over(o, col, clamp(a * 0.85, 0.0, 1.0));
-  o.rgb += col * smoothstep(0.55, 1.0, h) * 0.32 * uFlame;
+  em = em * (1.0 - clamp(a * 0.85, 0.0, 1.0)) + col * clamp(a * 0.85, 0.0, 1.0);
+  vec3 add = col * smoothstep(0.55, 1.0, h) * 0.32 * uFlame;
   // Отсвет на земле.
-  o.rgb += vec3(1.0, 0.42, 0.1) * near * (1.0 - h) * 0.22 * flick * uFlame;
+  add += vec3(1.0, 0.42, 0.1) * near * (1.0 - h) * 0.22 * flick * uFlame;
+  o.rgb += add;
+  em += add;
   // Искры: подхвачены жаром и ветром, гаснут на лету.
   for (int k = 0; k < 2; k++) {
     float sc = 2.4 + float(k) * 1.7;
@@ -843,7 +909,10 @@ void main() {
     float src = fuel(p - W * (0.3 + life * 1.4), t);
     float spark = smoothstep(0.09, 0.0, length(q - sp)) * step(0.82, hh) * (1.0 - life) * src;
     o.rgb += vec3(1.0, 0.75, 0.3) * spark * 1.2 * uFlame;
+    em += vec3(1.0, 0.75, 0.3) * spark * 1.2 * uFlame;
   }
+  // Ночью огонь светится сам; дым и копоть — нет.
+  if (uPass > 0.5) { gl_FragColor = vec4(em * uNight * 0.85, 0.0) * uStrength * keep(); return; }
   gl_FragColor = o * uStrength * keep();
 }`;
 
@@ -885,7 +954,7 @@ void main() {
   float seams = 0.07 * uSeams * max(line.x, line.y) + 0.012 * uSeams * max(halo.x, halo.y);
   float light = pv * (line.x * 1.1 + halo.x * 0.35) + ph * (line.y * 1.1 + halo.y * 0.35);
   vec3 o = c * (seams + light) + vec3(0.85) * (pv * line.x + ph * line.y) * 0.4;
-  gl_FragColor = vec4(o * m * uStrength, 0.0);
+  gl_FragColor = vec4(o * m * uStrength, 0.0) * (uPass > 0.5 ? uNight : 1.0);
 }`;
 
 // Разлом: трещина в реальности посреди пола. Карта ничего не должна знать —
@@ -1045,6 +1114,8 @@ void main() {
 
   // Мягко к краю области: у нарисованной вручную не проступает её контур.
   gl_FragColor = o * uStrength * smoothstep(0.05, 0.95, m);
+  // Ночью светится сам: свет кромки и искр — сложением поверх освещения.
+  if (uPass > 0.5) gl_FragColor = vec4(gl_FragColor.rgb * uNight, 0.0);
 }`;
 
 export const FRAG = { water: WATER, waterfall: WATERFALL, fountain: FOUNTAIN, lava: LAVA, swamp: SWAMP, fog: FOG, fire: FIRE, neon: NEON, rift: RIFT };

@@ -217,7 +217,8 @@ float plume(vec2 p, vec2 src, float t, float wide) {
 void main() {
   vec2 p = vPos / uGrid;
   float sm = clamp(plume(p, uCenter, uTime, uRadius * 0.55) * uSmoke * (0.35 + 0.65 * uHeat), 0.0, 0.85);
-  gl_FragColor = vec4(vec3(0.42, 0.41, 0.43) * sm, sm) * uStrength;
+  // Тёплый серый: холодный над зелёной кроной давал сиреневый налёт.
+  gl_FragColor = vec4(vec3(0.38, 0.35, 0.32) * sm, sm) * uStrength;
 }`;
 
 /** @type {Map<string, {tile: Tile, flame: PIXI.Mesh, smoke: PIXI.Mesh, light: object|null, clock: number}>} */
@@ -391,6 +392,16 @@ function follow(fire) {
     uu.uTile = tex;
     uu.uRect = new Float32Array([x0, y0, tw, th]);
     uu.uFrame = new Float32Array([fr.x / base.width, fr.y / base.height, fr.width / base.width, fr.height / base.height]);
+  }
+  // Foundry 14 пересоздаёт меш тайла (догрузка картинки, правка) и кладёт его в конец
+  // основной группы без пересортировки: пламя оказывалось под тайлом и не было видно.
+  // Проверяем порядок, когда меш тайла сменился, и раз в секунду.
+  const P = canvas.primary;
+  const now = performance.now();
+  if (P && flame.parent === P && (fire.mesh !== tm || now - (fire.checked ?? 0) > 1000)) {
+    fire.mesh = tm;
+    fire.checked = now;
+    if (tm.parent === P && P.children.indexOf(flame) < P.children.indexOf(tm)) P.sortChildren();
   }
   flame.position.copyFrom(tm.position);
   flame.scale.copyFrom(tm.scale);
