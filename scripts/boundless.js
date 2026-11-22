@@ -1,24 +1,27 @@
 // Boundless (SweetyHake): огромный мир Картографа одной сценой, кусками. Тайлы и крыши там —
-// меши самого Boundless, а не тайлы Foundry, и хуки тайлов их не видят. Каждый кадр смотрим,
-// что Boundless держит на холсте, и отдаём эти меши тем же модулям, что оживляют тайлы:
-// под видом тайла — `{id, mesh, document}`, где `document` собран из записи манифеста
-// (середина, размер, поворот, высота, картинка, пометки `flags.burn-living-map`).
-//   тайлы (`activeVirtualTiles`): ветер (кроны, кусты, бельё, ветроуказатели, гамаки), листья
-//     и светлячки, парение, «на воде», краны и вагонетки, техника, тени от солнца, колонки;
-//   дома (`activeOverlays`, меш крыши): дым из труб и вода из сливов под дождём;
+// меши самого Boundless, а не тайлы Foundry, и хуки тайлов их не видят. Что Boundless ставит
+// на холст, отдаём тем же модулям, что оживляют тайлы: под видом тайла — `{id, mesh, document}`,
+// где `document` собран из записи манифеста (середина, размер, поворот, высота, картинка,
+// пометки `flags.burn-living-map`).
+//   тайлы: ветер (кроны, кусты, бельё, ветроуказатели, гамаки), листья и светлячки, парение,
+//     «на воде», краны и вагонетки, техника, тени от солнца, колонки;
+//   дома (меш крыши): дым из труб и вода из сливов под дождём;
 //   живые огни (`dynamicLights`): скорость и сила анимации, окраска, затухание, яркость из записи.
 // Вода, болото и звуки мест — обычные области сцены, их оживляет main.js как всегда.
 //
-// Boundless берёт меши из пула: ушедший тайл отдаёт свой меш другому. Поэтому отпускаем
-// раньше всех (высокий приоритет тикера), а «свой ли меш» — по имени, которое Boundless
-// даёт мешу при установке. Модуль может сам сбросить взятое (пересборка по хукам) —
-// тогда берём заново в следующем кадре.
+// С Boundless 1.1.1 есть события `Boundless.on`: `virtualTileMount` / `virtualTileRetire`,
+// `overlayMount` / `overlayRetire` (снятие — до возврата меша в пул), `mount` / `unmount`.
+// По ним и берём и отпускаем. Наши модули сами сбрасывают взятое при пересборке по хукам
+// тайлов и сцены, поэтому раз в полсекунды сверяем их со своим списком — он из событий, а не
+// из внутренностей Boundless.
 //
-// Отражать тайлы Boundless не умеет. Отражённое Картограф кладёт своей картинкой, а
-// механизм, ветроуказатель и колонку (их рисуют по раскладке картинки) — с `scaleX` −1 в
-// записи: такой меш отражаем сами, как ядро отражает тайл, и модули видят обычный
-// отражённый тайл. Ширину меша Boundless ставит со знаком, поэтому, уходя в пул, меш
-// получает прямой вид обратно — иначе отразился бы следующий тайл на нём.
+// Boundless 1.1.0 событий не шлёт: тогда каждый кадр смотрим `activeVirtualTiles` и
+// `activeOverlays`, «свой ли меш» узнаём по имени, которое Boundless даёт мешу при установке,
+// и подменяем `retireMesh`, чтобы отпустить меш раньше, чем он уйдёт к другому тайлу.
+//
+// Отражение: Boundless 1.1.2 сам ставит знак `scaleX` / `scaleY` из записи и сбрасывает его в
+// пуле. Старому отражаем сами (механизм, ветроуказатель и колонку Картограф кладёт с `scaleX`
+// −1 — их рисуют по раскладке картинки), а уходящий в пул меш возвращаем прямым.
 
 import { addWind, dropWind, windKeys } from "./wind.js";
 import { addSmoke, dropSmoke, smokeKeys } from "./chimneys.js";
@@ -34,6 +37,8 @@ import { addScuppers, dropScuppers, scupperKeys } from "./scupper.js";
 const MODULE_ID = "burn-living-map";
 /** Ключи взятого у Boundless — чтобы не спутать с тайлами Foundry. */
 const PREFIX = "boundless:";
+/** Раз в столько кадров сверяем модули со списком из событий. */
+const RESYNC = 30;
 
 const own = (doc) => doc.flags?.[MODULE_ID] ?? {};
 const list = (v) => Array.isArray(v) && v.length > 0;
@@ -63,11 +68,16 @@ function boundless() {
   return B?.active && canvas.scene?.flags?.boundless?.enabled ? B : null;
 }
 
+/** Boundless шлёт события установки и снятия (1.1.1+). */
+const hasEvents = (B) => typeof B?.on === "function";
+
 /** Меш ещё наш: Boundless ставит ему имя при установке и снимает, убирая в пул. */
 function owner(mesh) {
   const name = mesh.name;
   return () => !mesh.destroyed && mesh.name === name;
 }
+
+/* ------------------------------ Отражение ------------------------------ */
 
 /** Отражённые нами меши → имя, под которым отражали. */
 const mirrored = new Map();
@@ -76,7 +86,8 @@ const GUARD = Symbol.for(`${MODULE_ID}.mirror`);
 function mirror(vt) {
   if (!(Number(vt.tSpec?.scaleX) < 0)) return;
   const mesh = vt.mesh;
-  if (mesh.scale.x > 0) mesh.scale.x = -mesh.scale.x;
+  if (mesh.scale.x < 0) return; // отразил сам Boundless
+  mesh.scale.x = -mesh.scale.x;
   mirrored.set(mesh, mesh.name);
 }
 
@@ -85,7 +96,7 @@ function unmirror(mesh) {
   mirrored.delete(mesh);
 }
 
-/** Меш уходит в пул — сразу прямым: следующий тайл на нём Boundless ставит в том же шаге. */
+/** Старый Boundless: меш уходит в пул — сразу прямым, следующий тайл на нём ставится в том же шаге. */
 function guardPool(B) {
   const retire = B.retireMesh;
   if (typeof retire !== "function" || retire[GUARD]) return;
@@ -97,12 +108,14 @@ function guardPool(B) {
   B.retireMesh = guarded;
 }
 
+/* ------------------------------ Свет ------------------------------ */
+
 /**
  * Живые огни Boundless (у фишек со зрением) он ставит со скоростью и силой анимации 3, без окраски,
  * затухания и яркости: из записи манифеста берёт только вид анимации. Картограф (0.2.51+) кладёт их
  * девятым полем записи — объектом, как у запекалки самого Boundless. Доводим огонь по нему один раз:
  * Boundless пересоздаёт огни новыми объектами, а свою переинициализацию делает с `ls.data`, где наше
- * уже есть.
+ * уже есть. Событий для огней у Boundless нет — смотрим `dynamicLights` каждый кадр.
  */
 const tunedFor = new WeakMap();
 const tunedLights = new WeakSet();
@@ -135,6 +148,8 @@ function tuneLights(B) {
   }
   if (changed) canvas.perception.update({ refreshLighting: true });
 }
+
+/* ------------------------------ Тайлы и дома ------------------------------ */
 
 function asTile(key, vt) {
   const s = vt.tSpec ?? {}, mesh = vt.mesh;
@@ -171,31 +186,26 @@ function classify(tile, on) {
   return { tile, kinds: KINDS.filter((k) => k.on === on && k.wants(tile.document)) };
 }
 
-function tick() {
-  const B = boundless();
-  if (!B || !canvas.ready) return stop();
-  guardPool(B);
-  tuneLights(B);
-  // Меш ушёл к другому мимо пула — вернуть прямой вид.
-  for (const [mesh, name] of mirrored) if (mesh.destroyed || mesh.name !== name) unmirror(mesh);
-  // Что Boundless держит сейчас: id → тайл и кто его оживляет.
-  const want = new Map();
-  for (const [key, vt] of B.activeVirtualTiles ?? []) {
-    if (!vt?.mesh || vt.mesh.destroyed) continue;
-    mirror(vt);
-    let info = known.get(vt);
-    if (!info) known.set(vt, (info = classify(asTile(key, vt), "tile")));
-    if (info.kinds.length) want.set(info.tile.id, info);
-  }
-  for (const [key, ov] of B.activeOverlays ?? []) {
-    if (!ov?.roofMesh || ov.roofMesh.destroyed) continue;
-    let info = known.get(ov);
-    if (!info || info.tile.mesh !== ov.roofMesh) known.set(ov, (info = classify(asHouse(key, ov, B), "house")));
-    if (info.kinds.length) want.set(info.tile.id, info);
-  }
+/** Тайл Boundless → разбор (или null, если оживлять нечего). */
+function tileInfo(key, vt) {
+  if (!vt?.mesh || vt.mesh.destroyed) return null;
+  mirror(vt);
+  let info = known.get(vt);
+  if (!info) known.set(vt, (info = classify(asTile(key, vt), "tile")));
+  return info.kinds.length ? info : null;
+}
+
+function houseInfo(key, ov, B) {
+  if (!ov?.roofMesh || ov.roofMesh.destroyed) return null;
+  let info = known.get(ov);
+  if (!info || info.tile.mesh !== ov.roofMesh) known.set(ov, (info = classify(asHouse(key, ov, B), "house")));
+  return info.kinds.length ? info : null;
+}
+
+/** Модули — по списку: лишнее и сменившее меш отпустить, недостающее взять. */
+function sync(want) {
   for (const kind of KINDS) {
     const have = new Set(kind.keys());
-    // Ушёл с холста или сменил меш — отпустить.
     for (const id of have) {
       if (!id.startsWith(PREFIX)) continue;
       const w = want.get(id);
@@ -212,14 +222,95 @@ function tick() {
   }
 }
 
+/** Отпустить один тайл во всех модулях — сразу, пока меш ещё не ушёл в пул. */
+function release(id, mesh) {
+  for (const kind of KINDS) {
+    if (!kind.mesh.has(id)) continue;
+    kind.drop(id);
+    kind.mesh.delete(id);
+  }
+  if (mesh && mirrored.has(mesh)) unmirror(mesh);
+}
+
+/* ------------------------------ По событиям (1.1.1+) ------------------------------ */
+
+/** Что Boundless держит сейчас, по его событиям: id → тайл и кто его оживляет. */
+const live = new Map();
+let dirty = false, frame = 0;
+let subscribed = null;
+
+function take(info) {
+  if (!info) return;
+  live.set(info.tile.id, info);
+  dirty = true;
+}
+
+function letGo(id, mesh) {
+  if (!live.delete(id) && !mesh) return;
+  release(id, mesh);
+}
+
+function subscribe(B) {
+  if (subscribed === B) return;
+  subscribed = B;
+  B.on("virtualTileMount", ({ key, vt } = {}) => take(tileInfo(key, vt)));
+  B.on("virtualTileRetire", ({ key, mesh } = {}) => letGo(`${PREFIX}t:${key}`, mesh));
+  B.on("overlayMount", ({ key, ov } = {}) => take(houseInfo(key, ov, B)));
+  B.on("overlayRetire", ({ key, mesh } = {}) => letGo(`${PREFIX}o:${key}`, mesh));
+  B.on("mount", () => start());
+  B.on("unmount", () => stop());
+}
+
+/** Что уже стояло до подписки (модуль включили посреди игры) — один раз. */
+function seed(B) {
+  for (const [key, vt] of B.activeVirtualTiles ?? []) take(tileInfo(key, vt));
+  for (const [key, ov] of B.activeOverlays ?? []) take(houseInfo(key, ov, B));
+}
+
+/* ------------------------------ Кадр ------------------------------ */
+
+/** Старый Boundless: что он держит сейчас, по его спискам. */
+function scan(B) {
+  guardPool(B);
+  // Меш ушёл к другому мимо пула — вернуть прямой вид.
+  for (const [mesh, name] of mirrored) if (mesh.destroyed || mesh.name !== name) unmirror(mesh);
+  const want = new Map();
+  for (const [key, vt] of B.activeVirtualTiles ?? []) {
+    const info = tileInfo(key, vt);
+    if (info) want.set(info.tile.id, info);
+  }
+  for (const [key, ov] of B.activeOverlays ?? []) {
+    const info = houseInfo(key, ov, B);
+    if (info) want.set(info.tile.id, info);
+  }
+  return want;
+}
+
+function tick() {
+  const B = boundless();
+  if (!B || !canvas.ready) return stop();
+  tuneLights(B);
+  if (!hasEvents(B)) return sync(scan(B));
+  if (dirty || ++frame >= RESYNC) {
+    dirty = false;
+    frame = 0;
+    sync(live);
+  }
+}
+
 /** Boundless включается не сразу после готовности холста: ждём его, раз в секунду, до 30 с. */
 function start(tries = 30) {
   if (ticking) return;
-  if (!boundless()) {
+  const B = boundless();
+  if (!B) {
     if (tries > 0 && canvas.scene?.flags?.boundless?.enabled) setTimeout(() => start(tries - 1), 1000);
     return;
   }
-  // Раньше модулей: меш, который Boundless отдал другому тайлу, отпускаем до их кадра.
+  if (hasEvents(B)) {
+    subscribe(B);
+    seed(B);
+  }
+  // Раньше модулей: у старого Boundless меш, отданный другому тайлу, отпускаем до их кадра.
   canvas.app.ticker.add(tick, null, PIXI.UPDATE_PRIORITY.HIGH);
   ticking = true;
 }
@@ -227,6 +318,8 @@ function start(tries = 30) {
 function stop() {
   if (ticking) canvas.app?.ticker.remove(tick);
   ticking = false;
+  live.clear();
+  dirty = false;
   for (const kind of KINDS) {
     for (const id of [...kind.keys()]) if (id.startsWith(PREFIX)) kind.drop(id);
     kind.mesh.clear();
@@ -241,10 +334,17 @@ export function boundlessStatus() {
   out.mirrored = mirrored.size;
   const B = globalThis.Boundless;
   out.lights = [...(B?.dynamicLights?.values() ?? [])].filter((ls) => tunedLights.has(ls)).length;
+  out.events = hasEvents(B) && subscribed === B;
+  out.live = live.size;
   return out;
 }
 
 export function registerBoundless() {
+  // Подписаться заранее: тайлы первой установки Boundless ставит до своего события `mount`.
+  Hooks.once("ready", () => {
+    const B = globalThis.Boundless;
+    if (hasEvents(B)) subscribe(B);
+  });
   // Boundless поднимает свой мир после готовности холста.
   Hooks.on("canvasReady", () => setTimeout(start, 500));
   Hooks.on("canvasTearDown", () => stop());
