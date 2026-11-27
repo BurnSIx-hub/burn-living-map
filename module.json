@@ -20,6 +20,9 @@
   "esmodules": [
     "scripts/main.js"
   ],
+  "styles": [
+    "styles/panel.css"
+  ],
   "languages": [
     {
       "lang": "en",

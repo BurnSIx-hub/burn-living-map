@@ -144,8 +144,11 @@ Moved here from the "Location Misc" module (formerly footstep-sounds). The behav
 
 All module settings live in their own window, not in the game settings. With BurnHub, the "Wild Canvas" tile opens it; without BurnHub, a "Wild Canvas settings" button in the game settings does.
 
-- **On this computer** — on or off (for a weak computer), effect strength, place sounds, weather on the ground, footsteps.
-- **For everyone at the table** — the look of every effect, wind in the crowns, falling leaves, splashes. Only a user who may change world settings sees this part.
+- **Effects** — a card for every effect with a picture of it. Pick one: on the right are its sliders (the default look for all such regions) and a **Draw region** button — outline a spot with the region polygon tool and it comes to life at once, no region window needed. A search field filters the cards; a badge shows how many regions of that effect the scene has.
+- **Scene** — what applies to all effects: strength, speed, splashes, wind in the crowns, falling leaves.
+- **Bottom bar** — switches for this computer: Wild Canvas on or off (for a weak computer), place sounds, footsteps, weather on the ground, object shadows.
+
+A user who may not change world settings sees only the Scene tab with their own effect strength, and the switches.
 
 Sliders take effect at once; closing the window without saving brings everything back.
 
